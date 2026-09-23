@@ -13,7 +13,7 @@ enum GeminiTranscription {
     static let defaultBaseURL = "https://generativelanguage.googleapis.com/v1beta"
 
     /// Smart mode cannot be combined with word timestamps or diarization, and
-    /// FreeFlow needs neither — it wants clean prose to paste at the cursor.
+    /// OmniFlow needs neither — it wants clean prose to paste at the cursor.
     private static let smartMode = "smart"
 
     /// The API caps biasing terms; send the first ones and drop the rest rather

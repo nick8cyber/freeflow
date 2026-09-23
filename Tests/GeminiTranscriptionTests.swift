@@ -44,7 +44,7 @@ enum GeminiTranscriptionTests {
             model: "gemini-3.5-transcribe",
             audioData: audio,
             mimeType: "audio/wav",
-            customVocabulary: "FreeFlow, Groq"
+            customVocabulary: "OmniFlow, Groq"
         )
         let json = try! JSONSerialization.jsonObject(with: body) as! [String: Any]
 
@@ -58,7 +58,7 @@ enum GeminiTranscriptionTests {
 
         let config = ((json["generation_config"] as? [String: Any])?["transcription_config"]) as? [String: Any]
         TestSupport.expectEqual((config?["mode"] as? [String: Any])?["type"] as? String, "smart")
-        TestSupport.expectEqual(config?["custom_vocabulary"] as? [String], ["FreeFlow", "Groq"])
+        TestSupport.expectEqual(config?["custom_vocabulary"] as? [String], ["OmniFlow", "Groq"])
 
         // Pinning a language was observed to drop smart mode back to verbatim
         // output, which would silently undo the cleanup this model is used for.

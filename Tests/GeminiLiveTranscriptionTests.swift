@@ -53,7 +53,7 @@ enum GeminiLiveTranscriptionTests {
     private static func testSetupAsksForSmartModeAndVocabulary() {
         let setup = try! GeminiLiveTranscription.setupMessage(
             model: "gemini-3.5-transcribe-live",
-            customVocabulary: "FreeFlow, Groq, Groq"
+            customVocabulary: "OmniFlow, Groq, Groq"
         )
         let json = try! JSONSerialization.jsonObject(with: Data(setup.utf8)) as! [String: Any]
         let body = json["setup"] as! [String: Any]
@@ -68,7 +68,7 @@ enum GeminiLiveTranscriptionTests {
         let transcription = body["inputAudioTranscription"] as? [String: Any]
         // Smart mode is upper case here, unlike the Interactions API.
         TestSupport.expectEqual(transcription?["mode"] as? String, "SMART")
-        TestSupport.expectEqual(transcription?["custom_vocabulary"] as? [String], ["FreeFlow", "Groq"])
+        TestSupport.expectEqual(transcription?["custom_vocabulary"] as? [String], ["OmniFlow", "Groq"])
 
         // Pinning a language drops the model out of smart mode.
         TestSupport.expect(transcription?["language_codes"] == nil, "Should let Gemini auto-detect the language")

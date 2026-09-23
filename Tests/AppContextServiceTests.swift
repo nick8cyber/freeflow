@@ -28,14 +28,14 @@ enum AppContextServiceTests {
         Hidden chain of thought should never appear in context.
         It contains misleading details.
         </think>
-        The user is editing a project note in FreeFlow. They likely intend to tighten the release wording.
+        The user is editing a project note in OmniFlow. They likely intend to tighten the release wording.
         """
 
         let summary = AppContextService.activitySummary(from: output, model: "qwen/qwen3.6-27b")
 
         TestSupport.expectEqual(
             summary,
-            "The user is editing a project note in FreeFlow. They likely intend to tighten the release wording."
+            "The user is editing a project note in OmniFlow. They likely intend to tighten the release wording."
         )
         TestSupport.expect(summary?.contains("Hidden chain of thought") == false, "Qwen reasoning leaked into summary")
     }

@@ -1,3 +1,8 @@
+# OmniFlow — changelog
+
+> OmniFlow — форк-продолжение FreeFlow (MIT, © Zach Latta и контрибьюторы).
+> Записи ниже вплоть до 1.2.1 — унаследованная история апстрима.
+
 # Changelog
 
 All notable changes to FreeFlow are documented here.

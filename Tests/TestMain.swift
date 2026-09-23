@@ -1,7 +1,7 @@
 import Foundation
 
 @main
-struct FreeFlowTests {
+struct OmniFlowTests {
     static func main() {
         AppContextServiceTests.run()
         GeminiLiveTranscriptionTests.run()
@@ -11,6 +11,6 @@ struct FreeFlowTests {
         SemanticVersionTests.run()
         LLMCooldownManagerTests.run()
         TranscriptTextCoreTests.run()
-        print("FreeFlowTests passed")
+        print("OmniFlowTests passed")
     }
 }

@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let geminiLiveLog = OSLog(subsystem: "com.zachlatta.freeflow", category: "GeminiLiveTranscription")
+private let geminiLiveLog = OSLog(subsystem: "com.nick8cyber.omniflow", category: "GeminiLiveTranscription")
 
 /// Streams microphone audio to `gemini-3.5-transcribe-live` over the Live API
 /// socket and returns the transcript when the dictation ends.
@@ -27,7 +27,7 @@ final class GeminiLiveTranscriptionService: RealtimeTranscriptBackend {
     private var task: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
 
-    private let stateQueue = DispatchQueue(label: "com.zachlatta.freeflow.geminilive.state")
+    private let stateQueue = DispatchQueue(label: "com.nick8cyber.omniflow.geminilive.state")
     private var transcript: String = ""
     private var finalContinuation: CheckedContinuation<String, Error>?
     private var streamEnded: Bool = false

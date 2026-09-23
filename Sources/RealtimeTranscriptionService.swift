@@ -1,7 +1,7 @@
 import Foundation
 import os.log
 
-private let realtimeLog = OSLog(subsystem: "com.zachlatta.freeflow", category: "RealtimeTranscription")
+private let realtimeLog = OSLog(subsystem: "com.nick8cyber.omniflow", category: "RealtimeTranscription")
 
 enum RealtimeTranscriptionError: LocalizedError {
     case invalidBaseURL(String)
@@ -32,7 +32,7 @@ final class RealtimeTranscriptionService: RealtimeTranscriptBackend {
     private var task: URLSessionWebSocketTask?
     private var receiveTask: Task<Void, Never>?
 
-    private let stateQueue = DispatchQueue(label: "com.zachlatta.freeflow.realtime.state")
+    private let stateQueue = DispatchQueue(label: "com.nick8cyber.omniflow.realtime.state")
     private var finalText: String = ""
     private var partialText: String = ""
     private var finalContinuation: CheckedContinuation<String, Error>?
