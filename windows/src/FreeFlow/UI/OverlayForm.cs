@@ -42,7 +42,7 @@ public sealed class OverlayForm : Form
         // The level bar repaints up to 30×/s; without double buffering each repaint
         // erases the background first and the whole card visibly flickers.
         DoubleBuffered = true;
-        Size = new Size(540 * DeviceDpi / 96, 148 * DeviceDpi / 96);
+        Size = new Size(540 * DeviceDpi / 96, 112 * DeviceDpi / 96);
         Text = "FreeFlow Overlay"; // invisible (no caption) — lets test tooling find the window
 
         // Non-activating + transparent-to-input so dictation targets keep focus.
@@ -122,17 +122,17 @@ public sealed class OverlayForm : Form
         int pad = LogicalToDeviceUnits(22);
         int barWidth = LogicalToDeviceUnits(6);
         int gap = LogicalToDeviceUnits(4);
-        return new Rectangle(pad, LogicalToDeviceUnits(20),
-            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(76));
+        return new Rectangle(pad, LogicalToDeviceUnits(16),
+            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(56));
     }
 
     private Rectangle TextRect()
     {
         var bars = BarsRect();
         int pad = LogicalToDeviceUnits(22);
-        return new Rectangle(bars.Right + LogicalToDeviceUnits(16), LogicalToDeviceUnits(16),
+        return new Rectangle(bars.Right + LogicalToDeviceUnits(16), LogicalToDeviceUnits(13),
             ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(16),
-            LogicalToDeviceUnits(92));
+            LogicalToDeviceUnits(56));
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -189,7 +189,7 @@ public sealed class OverlayForm : Form
         int pillHeight = LogicalToDeviceUnits(22);
         int pillGap = LogicalToDeviceUnits(8);
         int right = rect.Right - LogicalToDeviceUnits(18);
-        int bottom = rect.Bottom - LogicalToDeviceUnits(16);
+        int bottom = rect.Bottom - LogicalToDeviceUnits(13);
 
         var targetPill = DrawPill(g, "→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard"),
             right, bottom, pillHeight, Theme.TextCaption, Color.FromArgb(38, 38, 46), null);
