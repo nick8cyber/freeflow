@@ -134,17 +134,17 @@ public sealed class OverlayForm : Form
         int pad = LogicalToDeviceUnits(16);
         int barWidth = LogicalToDeviceUnits(6);
         int gap = LogicalToDeviceUnits(4);
-        return new Rectangle(pad, LogicalToDeviceUnits(15),
-            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(34));
+        return new Rectangle(pad, LogicalToDeviceUnits(18),
+            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(44));
     }
 
     private Rectangle TextRect()
     {
         var bars = BarsRect();
         int pad = LogicalToDeviceUnits(22);
-        return new Rectangle(bars.Right + LogicalToDeviceUnits(14), LogicalToDeviceUnits(8),
+        return new Rectangle(bars.Right + LogicalToDeviceUnits(14), LogicalToDeviceUnits(10),
             ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(14) - PillColumnWidth,
-            LogicalToDeviceUnits(42));
+            LogicalToDeviceUnits(52));
     }
 
     /// <summary>Narrow right column holding the two stacked pills — sized to the
@@ -216,12 +216,12 @@ public sealed class OverlayForm : Form
         int columnLeft = rect.Right - LogicalToDeviceUnits(14) - PillColumnWidth;
 
         DrawPill(g, error ? "ERROR" : "REC",
-            right, rect.Top + LogicalToDeviceUnits(12), pillHeight,
+            right, rect.Top + LogicalToDeviceUnits(10), pillHeight,
             error ? Theme.Danger : Theme.AccentBright,
             error ? Color.FromArgb(60, 24, 24, 28) : Color.FromArgb(48, 120, 40, 44),
             error ? Theme.DangerStrong : Theme.Danger);
         DrawPill(g, "→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard"),
-            right, rect.Top + LogicalToDeviceUnits(40), pillHeight,
+            right, rect.Top + LogicalToDeviceUnits(32), pillHeight,
             Theme.TextCaption, Color.FromArgb(38, 38, 46), null);
         _ = columnLeft;
     }
@@ -375,11 +375,36 @@ public sealed class OverlayForm : Form
     }
 
     /// <summary>Snap the card to the canonical size for the monitor it is on now.
-    /// One source of truth per DPI — never accumulate WinForms rescales.</summary>
+    /// DeviceDpi can report a stale value for a borderless non-activating form that
+    /// was created on one monitor and shown on another — ask the MONITOR directly
+    /// (GetDpiForMonitor), or the card renders at the wrong scale ("half cut off",
+    /// one text line instead of two).</summary>
     public void ApplyCurrentMonitorSize()
     {
-        Size = new Size(480 * DeviceDpi / 96, 64 * DeviceDpi / 96);
+        var dpi = MonitorDpiOf(Handle);
+        Size = new Size(480 * (int)dpi / 96, 74 * (int)dpi / 96);
         RebuildRegion();
+    }
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("shcore.dll")]
+    private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
+
+    /// <summary>Effective DPI of the monitor this window is on (MDT_EFFECTIVE_DPI).</summary>
+    private static uint MonitorDpiOf(IntPtr hwnd)
+    {
+        const uint tonearest = 2;
+        const int effective = 0;
+        try
+        {
+            var hmon = MonitorFromWindow(hwnd, tonearest);
+            if (hmon != IntPtr.Zero &&
+                GetDpiForMonitor(hmon, effective, out var dpiX, out _) == 0 && dpiX > 0)
+                return dpiX;
+        }
+        catch (Exception) { }
+        return 96;
     }
 
     /// <summary>Pins the card to the TOP center of the cursor's monitor: the bottom
