@@ -634,6 +634,12 @@ public sealed class Pipeline
     // --- paste-destination focus restore ---
     private IntPtr _targetWindow;
 
+    /// <summary>Window the dictation started in (capture target for the overlay).</summary>
+    public IntPtr TargetWindow
+    {
+        get { lock (_gate) return _targetWindow; }
+    }
+
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")]

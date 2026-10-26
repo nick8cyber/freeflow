@@ -42,7 +42,7 @@ public sealed class OverlayForm : Form
         // The level bar repaints up to 30×/s; without double buffering each repaint
         // erases the background first and the whole card visibly flickers.
         DoubleBuffered = true;
-        Size = new Size(480 * DeviceDpi / 96, 64 * DeviceDpi / 96);
+        ApplyCurrentMonitorSize();
         Text = "FreeFlow Overlay"; // invisible (no caption) — lets test tooling find the window
 
         // Non-activating + transparent-to-input so dictation targets keep focus.
@@ -76,6 +76,18 @@ public sealed class OverlayForm : Form
     {
         base.OnHandleCreated(e);
         RebuildRegion();
+        // Moving between monitors with different scales fires WM_DPICHANGED and
+        // WinForms rescales the form AFTER our PositionOverlay ran — re-clamp here,
+        // or the card ends up half outside the target monitor ("half cut off").
+        DpiChanged += (_, _) =>
+        {
+            // WinForms rescales the form on WM_DPICHANGED; snap the size to the
+            // canonical value for the new DPI — compounding scales leave parts of
+            // the card outside its Region (transparent, "half cut off").
+            ApplyCurrentMonitorSize();
+            PositionOverlay();
+            Invalidate();
+        };
         // Borderless forms get no system shadow; extending frame by one bottom pixel
         // brings the standard DWM drop shadow back.
         var margins = new MARGINS { Bottom = 1 };
@@ -135,8 +147,18 @@ public sealed class OverlayForm : Form
             LogicalToDeviceUnits(42));
     }
 
-    /// <summary>Narrow right column holding the two stacked pills.</summary>
-    private int PillColumnWidth => LogicalToDeviceUnits(86);
+    /// <summary>Narrow right column holding the two stacked pills — sized to the
+    /// widest pill so nothing gets ellipsised into unreadable smudges.</summary>
+    private int PillColumnWidth =>
+        Math.Max(MeasurePill("→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard")).Width,
+                 MeasurePill("ERROR").Width) + LogicalToDeviceUnits(4);
+
+    private Size MeasurePill(string text)
+    {
+        var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
+        return new Size(textSize.Width + LogicalToDeviceUnits(6) + LogicalToDeviceUnits(5) + LogicalToDeviceUnits(18),
+            LogicalToDeviceUnits(16));
+    }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -211,8 +233,7 @@ public sealed class OverlayForm : Form
         var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
         int textWidth = textSize.Width;
         int dot = dotColor.HasValue ? LogicalToDeviceUnits(6) : 0;
-        int width = Math.Min(textWidth + dot + (dot > 0 ? LogicalToDeviceUnits(5) : 0) + LogicalToDeviceUnits(18),
-            PillColumnWidth);
+        int width = textWidth + dot + (dot > 0 ? LogicalToDeviceUnits(5) : 0) + LogicalToDeviceUnits(18);
         var rect = new Rectangle(right - width, top, width, height);
         using (var brush = new SolidBrush(backColor))
         using (var path = RoundedPath(rect, height / 2))
@@ -286,6 +307,8 @@ public sealed class OverlayForm : Form
         _transcript = "";
         Array.Clear(_barLevels);
         PositionOverlay();
+        ApplyCurrentMonitorSize();
+        PositionOverlay();
         RebuildRegion();
         ReassertTopMost();
         Show();
@@ -333,6 +356,8 @@ public sealed class OverlayForm : Form
         _statusText = message;
         _transcript = "";
         PositionOverlay();
+        ApplyCurrentMonitorSize();
+        PositionOverlay();
         RebuildRegion();
         ReassertTopMost();
         Show();
@@ -349,13 +374,26 @@ public sealed class OverlayForm : Form
         _hideTimer.Start();
     }
 
+    /// <summary>Snap the card to the canonical size for the monitor it is on now.
+    /// One source of truth per DPI — never accumulate WinForms rescales.</summary>
+    public void ApplyCurrentMonitorSize()
+    {
+        Size = new Size(480 * DeviceDpi / 96, 64 * DeviceDpi / 96);
+        RebuildRegion();
+    }
+
     /// <summary>Pins the card to the TOP center of the cursor's monitor: the bottom
     /// of the screen is where input fields live — the overlay must never cover them.
     /// Clamped into the monitor's working area so mixed-DPI coordinate surprises
     /// can never push it off-screen.</summary>
+    /// <summary>Monitor to anchor the card to: the paste-target window's screen
+    /// (set by TrayContext at recording start) — NOT the cursor, which may sit on
+    /// a different monitor than the one the user is typing on.</summary>
+    public Screen? AnchorScreen { get; set; }
+
     private void PositionOverlay()
     {
-        var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+        var area = (AnchorScreen ?? Screen.FromPoint(Cursor.Position)).WorkingArea;
         var x = Math.Clamp(area.Left + (area.Width - Width) / 2, area.Left + 8, area.Right - Width - 8);
         var y = Math.Clamp(area.Top + 12, area.Top + 8, Math.Max(area.Top + 8, area.Bottom - Height - 8));
         Location = new Point(x, y);

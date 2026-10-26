@@ -62,7 +62,12 @@ public sealed class TrayContext : ApplicationContext
             _overlay.ShowError("Global shortcut monitoring could not start — hotkeys are disabled. Restart the app or check security software.");
         }
 
-        _pipeline.RecordingStarted += _ => _overlay.ShowRecording();
+        _pipeline.RecordingStarted += _ =>
+        {
+            var target = _pipeline.TargetWindow;
+            _overlay.AnchorScreen = target != IntPtr.Zero ? Screen.FromHandle(target) : null;
+            _overlay.ShowRecording();
+        };
         _pipeline.LevelChanged += _overlay.UpdateLevel;
         _pipeline.PartialTranscript += _overlay.UpdateTranscript;
         _pipeline.TargetAppChanged += _overlay.UpdateTargetApp;
