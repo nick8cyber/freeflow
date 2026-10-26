@@ -42,7 +42,7 @@ public sealed class OverlayForm : Form
         // The level bar repaints up to 30×/s; without double buffering each repaint
         // erases the background first and the whole card visibly flickers.
         DoubleBuffered = true;
-        Size = new Size(540 * DeviceDpi / 96, MinHeight * DeviceDpi / 96);
+        Size = new Size(540 * DeviceDpi / 96, 112 * DeviceDpi / 96);
         Text = "FreeFlow Overlay"; // invisible (no caption) — lets test tooling find the window
 
         // Non-activating + transparent-to-input so dictation targets keep focus.
@@ -117,39 +117,12 @@ public sealed class OverlayForm : Form
         return path;
     }
 
-    // Card height adapts to the transcript: 1 line of text -> compact card,
-    // up to 3 lines -> grows. Top edge stays fixed (card grows downward).
-    private const int MinHeight = 64;
-    private const int MaxHeight = 136;
-    private const int ChromeHeight = 58; // top pad + gap + pills row + bottom pad
-
-    /// <summary>Resizes the card to the current transcript (1..3 lines).</summary>
-    private void UpdateSize()
-    {
-        var textWidth = ClientRectangle.Width - BarsRect().Right - LogicalToDeviceUnits(16)
-            - LogicalToDeviceUnits(22);
-        int textHeight = 0;
-        if (_transcript.Length > 0)
-            textHeight = TextRenderer.MeasureText(FitTail(_transcript,
-                new Rectangle(0, 0, textWidth, LogicalToDeviceUnits(200)), _transcriptFont),
-                _transcriptFont, new Size(textWidth, int.MaxValue),
-                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
-        var needed = ChromeHeight + Math.Min(Math.Max(textHeight, LogicalToDeviceUnits(20)), LogicalToDeviceUnits(92));
-        var newHeight = Math.Clamp(needed, MinHeight, MaxHeight) * DeviceDpi / 96;
-        if (Height != newHeight)
-        {
-            Height = newHeight;
-            RebuildRegion();
-            PositionOverlay();
-        }
-    }
-
     private Rectangle BarsRect()
     {
         int pad = LogicalToDeviceUnits(22);
         int barWidth = LogicalToDeviceUnits(6);
         int gap = LogicalToDeviceUnits(4);
-        return new Rectangle(pad, LogicalToDeviceUnits(16),
+        return new Rectangle(pad, LogicalToDeviceUnits(17),
             BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(56));
     }
 
@@ -157,9 +130,26 @@ public sealed class OverlayForm : Form
     {
         var bars = BarsRect();
         int pad = LogicalToDeviceUnits(22);
-        return new Rectangle(bars.Right + LogicalToDeviceUnits(16), LogicalToDeviceUnits(13),
-            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(16),
-            LogicalToDeviceUnits(56));
+        return new Rectangle(bars.Right + LogicalToDeviceUnits(16), LogicalToDeviceUnits(14),
+            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(16) - PillsStripWidth(),
+            LogicalToDeviceUnits(60));
+    }
+
+    /// <summary>Width reserved for the state + destination pills on the first line.</summary>
+    private int PillsStripWidth()
+    {
+        int gap = LogicalToDeviceUnits(8);
+        return MeasurePill("→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard")).Width
+            + gap + MeasurePill(_mode == OverlayMode.Error ? "ERROR" : "REC").Width
+            + LogicalToDeviceUnits(18);
+    }
+
+    private Size MeasurePill(string text)
+    {
+        var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
+        int dot = LogicalToDeviceUnits(8);
+        return new Size(textSize.Width + dot + LogicalToDeviceUnits(5) + LogicalToDeviceUnits(18),
+            LogicalToDeviceUnits(22));
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -211,33 +201,32 @@ public sealed class OverlayForm : Form
             error ? Theme.Danger : Theme.TextBright,
             TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
 
-        // Bottom-right pills: state + paste destination. No status text here —
-        // it duplicated the obvious and forced ugly ellipsises.
+        // Top-right pills, same line as the transcript's first row: state + paste
+        // destination. The text rect is narrowed by their width, so nothing overlaps.
         int pillHeight = LogicalToDeviceUnits(22);
         int pillGap = LogicalToDeviceUnits(8);
+        int pillTop = rect.Top + LogicalToDeviceUnits(12);
         int right = rect.Right - LogicalToDeviceUnits(18);
-        int bottom = rect.Bottom - LogicalToDeviceUnits(13);
 
         var targetPill = DrawPill(g, "→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard"),
-            right, bottom, pillHeight, Theme.TextCaption, Color.FromArgb(38, 38, 46), null);
+            right, pillTop, pillHeight, Theme.TextCaption, Color.FromArgb(38, 38, 46), null);
         var recText = error ? "ERROR" : "REC";
-        var recColor = error ? Theme.DangerStrong : Theme.Danger;
         DrawPill(g, recText,
-            right - targetPill.Width - pillGap, bottom, pillHeight,
+            right - targetPill.Width - pillGap, pillTop, pillHeight,
             error ? Theme.Danger : Theme.AccentBright,
             error ? Color.FromArgb(60, 24, 24, 28) : Color.FromArgb(48, 120, 40, 44),
             error ? Theme.DangerStrong : Theme.Danger);
     }
 
     /// <summary>Draws a rounded pill with an optional leading dot; returns its width.</summary>
-    private Size DrawPill(Graphics g, string text, int right, int bottom, int height,
+    private Size DrawPill(Graphics g, string text, int right, int top, int height,
         Color textColor, Color backColor, Color? dotColor)
     {
         var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
         int textWidth = textSize.Width;
         int dot = dotColor.HasValue ? LogicalToDeviceUnits(8) : 0;
         int width = textWidth + dot + (dot > 0 ? LogicalToDeviceUnits(5) : 0) + LogicalToDeviceUnits(18);
-        var rect = new Rectangle(right - width, bottom - height, width, height);
+        var rect = new Rectangle(right - width, top, width, height);
         using (var brush = new SolidBrush(backColor))
         using (var path = RoundedPath(rect, height / 2))
         {
@@ -309,7 +298,6 @@ public sealed class OverlayForm : Form
         _level = 0;
         _transcript = "";
         Array.Clear(_barLevels);
-        UpdateSize();
         PositionOverlay();
         RebuildRegion();
         ReassertTopMost();
@@ -330,7 +318,6 @@ public sealed class OverlayForm : Form
         _transcript = transcript.Length > MaxStoredTranscriptChars
             ? "…" + transcript[^MaxStoredTranscriptChars..]
             : transcript;
-        UpdateSize();
         if (Visible && _mode == OverlayMode.Recording) Invalidate();
     }
 
@@ -347,7 +334,6 @@ public sealed class OverlayForm : Form
         if (InvokeRequired) { BeginInvoke(() => ShowStatus(status)); return; }
         _statusText = status;
         if (!Visible) ShowRecording();
-        UpdateSize();
         Invalidate();
     }
 
