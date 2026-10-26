@@ -30,7 +30,7 @@ public sealed class OverlayForm : Form
     private string _targetApp = "";
     private OverlayMode _mode;
     private int _animTick;
-    private readonly Font _transcriptFont = new("Segoe UI", 13f);
+    private readonly Font _transcriptFont = new("Segoe UI", 10f);
 
     public OverlayForm()
     {
@@ -42,7 +42,7 @@ public sealed class OverlayForm : Form
         // The level bar repaints up to 30×/s; without double buffering each repaint
         // erases the background first and the whole card visibly flickers.
         DoubleBuffered = true;
-        Size = new Size(700 * DeviceDpi / 96, 84 * DeviceDpi / 96);
+        Size = new Size(480 * DeviceDpi / 96, 64 * DeviceDpi / 96);
         Text = "FreeFlow Overlay"; // invisible (no caption) — lets test tooling find the window
 
         // Non-activating + transparent-to-input so dictation targets keep focus.
@@ -119,24 +119,24 @@ public sealed class OverlayForm : Form
 
     private Rectangle BarsRect()
     {
-        int pad = LogicalToDeviceUnits(22);
+        int pad = LogicalToDeviceUnits(16);
         int barWidth = LogicalToDeviceUnits(6);
         int gap = LogicalToDeviceUnits(4);
-        return new Rectangle(pad, LogicalToDeviceUnits(14),
-            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(56));
+        return new Rectangle(pad, LogicalToDeviceUnits(15),
+            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(34));
     }
 
     private Rectangle TextRect()
     {
         var bars = BarsRect();
         int pad = LogicalToDeviceUnits(22);
-        return new Rectangle(bars.Right + LogicalToDeviceUnits(16), LogicalToDeviceUnits(14),
-            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(16) - PillColumnWidth,
-            LogicalToDeviceUnits(56));
+        return new Rectangle(bars.Right + LogicalToDeviceUnits(14), LogicalToDeviceUnits(8),
+            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(14) - PillColumnWidth,
+            LogicalToDeviceUnits(42));
     }
 
     /// <summary>Narrow right column holding the two stacked pills.</summary>
-    private const int PillColumnWidth = 120;
+    private int PillColumnWidth => LogicalToDeviceUnits(86);
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -150,7 +150,7 @@ public sealed class OverlayForm : Form
             g.FillRectangle(background, rect);
         }
 
-        int radius = LogicalToDeviceUnits(20);
+        int radius = LogicalToDeviceUnits(12);
         bool error = _mode == OverlayMode.Error;
         using (var border = new Pen(error ? Theme.DangerStrong : Color.FromArgb(64, 64, 74)))
         {
@@ -160,10 +160,10 @@ public sealed class OverlayForm : Form
 
         // Equalizer bars.
         var bars = BarsRect();
-        int barWidth = LogicalToDeviceUnits(6);
-        int gap = LogicalToDeviceUnits(4);
-        int baseBarHeight = LogicalToDeviceUnits(8);
-        int corner = LogicalToDeviceUnits(3);
+        int barWidth = LogicalToDeviceUnits(4);
+        int gap = LogicalToDeviceUnits(3);
+        int baseBarHeight = LogicalToDeviceUnits(6);
+        int corner = LogicalToDeviceUnits(2);
         for (var i = 0; i < BarCount; i++)
         {
             int height = Math.Max(baseBarHeight, (int)(bars.Height * Math.Clamp(_barLevels[i], 0, 1)));
@@ -189,8 +189,8 @@ public sealed class OverlayForm : Form
 
         // Right column, two rows: REC on the first, destination under it — both fit
         // within the two transcript rows, so the card stays short.
-        int pillHeight = LogicalToDeviceUnits(22);
-        int right = rect.Right - LogicalToDeviceUnits(14);
+        int pillHeight = LogicalToDeviceUnits(16);
+        int right = rect.Right - LogicalToDeviceUnits(10);
         int columnLeft = rect.Right - LogicalToDeviceUnits(14) - PillColumnWidth;
 
         DrawPill(g, error ? "ERROR" : "REC",
@@ -210,7 +210,7 @@ public sealed class OverlayForm : Form
     {
         var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
         int textWidth = textSize.Width;
-        int dot = dotColor.HasValue ? LogicalToDeviceUnits(8) : 0;
+        int dot = dotColor.HasValue ? LogicalToDeviceUnits(6) : 0;
         int width = Math.Min(textWidth + dot + (dot > 0 ? LogicalToDeviceUnits(5) : 0) + LogicalToDeviceUnits(18),
             PillColumnWidth);
         var rect = new Rectangle(right - width, top, width, height);
