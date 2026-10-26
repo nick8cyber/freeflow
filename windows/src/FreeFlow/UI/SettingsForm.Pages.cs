@@ -11,11 +11,14 @@ public sealed partial class SettingsForm
     /// <summary>Creates a scrollable page with a title/caption header and a card stack; returns the stack.</summary>
     private TableLayoutPanel MakePage(string title, string caption)
     {
+        // AutoScroll: several pages (Behavior, Providers) are taller than the
+        // window — without it the tail of the cards is unreachable.
         var page = new Panel
         {
             Dock = DockStyle.Fill,
             BackColor = Theme.Window,
             Visible = false,
+            AutoScroll = true,
         };
         var stack = new TableLayoutPanel
         {
