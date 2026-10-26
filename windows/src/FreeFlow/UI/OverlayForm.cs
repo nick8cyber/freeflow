@@ -253,21 +253,30 @@ public sealed class OverlayForm : Form
     }
 
     /// <summary>Trims a long string from its START so the newest words stay visible;
-    /// pure tail-ellipsis would hide exactly the part being dictated right now.</summary>
+    /// pure tail-ellipsis would hide exactly the part being dictated right now.
+    /// Binary search for the longest suffix that fits — a quarter-cut loop could
+    /// overshoot into a single line.</summary>
     private string FitTail(string text, Rectangle rect, Font font)
     {
         if (text.Length == 0) return text;
-        if (TextRenderer.MeasureText(text, font, rect.Size, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height <= rect.Height)
-            return text;
-        var tail = text;
-        while (tail.Length > 16 &&
-               TextRenderer.MeasureText("…" + tail, font, rect.Size, TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height > rect.Height)
+        if (MeasuredHeight(text, rect, font) <= rect.Height) return text;
+        int lo = 16, hi = text.Length - 1, best = 16;
+        while (lo <= hi)
         {
-            var cut = Math.Max(16, tail.Length / 4);
-            tail = tail[cut..];
+            var mid = (lo + hi) / 2;
+            if (MeasuredHeight("…" + text[mid..], rect, font) <= rect.Height)
+            {
+                best = mid;
+                lo = mid + 1;
+            }
+            else hi = mid - 1;
         }
-        return "…" + tail;
+        return "…" + text[best..];
     }
+
+    private static int MeasuredHeight(string text, Rectangle rect, Font font) =>
+        TextRenderer.MeasureText(text, font, rect.Size,
+            TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis).Height;
 
     private void TickAnimation()
     {
