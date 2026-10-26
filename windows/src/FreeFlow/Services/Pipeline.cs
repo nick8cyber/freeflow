@@ -1,4 +1,5 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using FreeFlow.Core;
 
 namespace FreeFlow.Services;
@@ -61,6 +62,8 @@ public sealed class Pipeline
     public event Action? Finished;
     /// <summary>Live interim transcript from realtime streaming (full text so far).</summary>
     public event Action<string>? PartialTranscript;
+    /// <summary>Foreground app captured at recording start — the paste destination.</summary>
+    public event Action<string>? TargetAppChanged;
     public event Action<string>? ErrorOccurred;
     public event Action? Cancelled;
 
@@ -260,6 +263,10 @@ public sealed class Pipeline
             Post(() => ErrorOccurred?.Invoke($"Failed to start recording: {ex.Message}"));
             return;
         }
+
+        // Remember the paste destination: if focus moves elsewhere mid-dictation
+        // (a stray click), the paste is restored to the window dictation started in.
+        _targetWindow = GetForegroundWindow();
 
         Post(() => RecordingStarted?.Invoke(mode));
     }
@@ -585,6 +592,7 @@ public sealed class Pipeline
         _lastTranscript = finalText;
         Post(() => StatusChanged?.Invoke(status + (parsing.ShouldPressEnterAfterPaste ? "; detected press enter command" : "")));
 
+        RestoreFocusToTarget();
         var pasted = _paste.Paste(
             finalText,
             parsing.ShouldPressEnterAfterPaste,
@@ -611,6 +619,39 @@ public sealed class Pipeline
         : providerUsed.StartsWith("Groq", StringComparison.Ordinal) ? "groq"
         : null;
 
+    // --- paste-destination focus restore ---
+    private IntPtr _targetWindow;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
+
+    /// <summary>
+    /// Best-effort restore of the window dictation started in: a stray click during
+    /// recording would otherwise redirect the Ctrl+V into whatever window the user
+    /// hit. The ALT tap relaxes the foreground lock so a background process may call
+    /// SetForegroundWindow; failure leaves focus as-is (paste follows focus, like
+    /// the macOS app).
+    /// </summary>
+    private void RestoreFocusToTarget()
+    {
+        var target = _targetWindow;
+        _targetWindow = IntPtr.Zero;
+        if (target == IntPtr.Zero || target == GetForegroundWindow()) return;
+        try
+        {
+            keybd_event(0xA4, 0, 0, IntPtr.Zero);
+            keybd_event(0xA4, 0, 2, IntPtr.Zero);
+            SetForegroundWindow(target);
+            Thread.Sleep(60);
+        }
+        catch (Exception) { }
+    }
+
     private void RecordHistory(AppSettings settings, string raw, string finalText, string status, string provider)
     {
         if (!settings.KeepHistory) return;
@@ -629,6 +670,7 @@ public sealed class Pipeline
         {
             var context = ContextService.Collect(settings.IncludeScreenshot);
             _contextAppName = context.AppName;
+            Post(() => TargetAppChanged?.Invoke(context.AppName ?? ""));
             var summary = await _router.SummarizeContextAsync(
                 ContextService.BuildMetadata(context), context.JpegBase64, ct);
             return summary ?? "Could not refresh app context at stop time; using text-only post-processing.";

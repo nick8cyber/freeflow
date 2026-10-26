@@ -65,6 +65,7 @@ public sealed class TrayContext : ApplicationContext
         _pipeline.RecordingStarted += _ => _overlay.ShowRecording();
         _pipeline.LevelChanged += _overlay.UpdateLevel;
         _pipeline.PartialTranscript += _overlay.UpdateTranscript;
+        _pipeline.TargetAppChanged += _overlay.UpdateTargetApp;
         _pipeline.StatusChanged += status => { _overlay.ShowStatus(status); UpdateTrayTooltip(); };
         _pipeline.Finished += () => { _overlay.HideAfterDelay(); UpdateTrayTooltip(); };
         _pipeline.Cancelled += () => { _overlay.HideAfterDelay(); UpdateTrayTooltip(); };

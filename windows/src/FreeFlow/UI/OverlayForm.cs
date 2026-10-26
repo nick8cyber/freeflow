@@ -1,3 +1,4 @@
+using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 using WinFormsTimer = System.Windows.Forms.Timer;
 
@@ -5,9 +6,11 @@ namespace FreeFlow.UI;
 
 /// <summary>
 /// Borderless, non-activating recording overlay (Windows analog of the macOS
-/// RecordingOverlay): a dark rounded card pinned to the TOP of the screen — the
-/// bottom, where input fields live, stays clear — with an animated level
-/// equalizer, the live interim transcript (tail shown first) and a status line.
+/// RecordingOverlay): a dark gradient card with a real DWM drop shadow, pinned to
+/// the TOP of the cursor's monitor — the bottom, where input fields live, stays
+/// clear — showing an animated equalizer, the live interim transcript (tail
+/// first), the paste destination ("→ App") and a LIVE badge. Re-asserts topmost
+/// during recording so pinned-topmost windows cannot cover it.
 /// </summary>
 public sealed class OverlayForm : Form
 {
@@ -24,6 +27,7 @@ public sealed class OverlayForm : Form
     private double _level;
     private string _statusText = "";
     private string _transcript = "";
+    private string _targetApp = "";
     private OverlayMode _mode;
     private int _animTick;
 
@@ -33,11 +37,11 @@ public sealed class OverlayForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        BackColor = Theme.Window;
+        BackColor = Color.FromArgb(22, 22, 27);
         // The level bar repaints up to 30×/s; without double buffering each repaint
         // erases the background first and the whole card visibly flickers.
         DoubleBuffered = true;
-        Size = new Size(520 * DeviceDpi / 96, 132 * DeviceDpi / 96);
+        Size = new Size(540 * DeviceDpi / 96, 148 * DeviceDpi / 96);
         Text = "FreeFlow Overlay"; // invisible (no caption) — lets test tooling find the window
 
         // Non-activating + transparent-to-input so dictation targets keep focus.
@@ -71,6 +75,10 @@ public sealed class OverlayForm : Form
     {
         base.OnHandleCreated(e);
         RebuildRegion();
+        // Borderless forms get no system shadow; extending frame by one bottom pixel
+        // brings the standard DWM drop shadow back.
+        var margins = new MARGINS { Bottom = 1 };
+        DwmExtendFrameIntoClientArea(Handle, ref margins);
     }
 
     protected override void OnResize(EventArgs e)
@@ -91,41 +99,80 @@ public sealed class OverlayForm : Form
     {
         if (Width <= 0 || Height <= 0) return;
         var old = Region;
-        Region = new Region(Theme.RoundedPath(ClientRectangle, LogicalToDeviceUnits(16)));
+        Region = new Region(RoundedPath(ClientRectangle, LogicalToDeviceUnits(20)));
         old?.Dispose();
         Invalidate();
     }
 
+    private static GraphicsPath RoundedPath(Rectangle bounds, int radius)
+    {
+        var path = new GraphicsPath();
+        int d = radius * 2;
+        path.AddArc(bounds.Left, bounds.Top, d, d, 180, 90);
+        path.AddArc(bounds.Right - d, bounds.Top, d, d, 270, 90);
+        path.AddArc(bounds.Right - d, bounds.Bottom - d, d, d, 0, 90);
+        path.AddArc(bounds.Left, bounds.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
     private Rectangle BarsRect()
     {
-        int pad = LogicalToDeviceUnits(20);
+        int pad = LogicalToDeviceUnits(22);
         int barWidth = LogicalToDeviceUnits(6);
         int gap = LogicalToDeviceUnits(4);
-        return new Rectangle(pad, LogicalToDeviceUnits(18),
-            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(72));
+        return new Rectangle(pad, LogicalToDeviceUnits(20),
+            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(76));
     }
 
     private Rectangle TextRect()
     {
         var bars = BarsRect();
-        int pad = LogicalToDeviceUnits(20);
-        return new Rectangle(bars.Right + LogicalToDeviceUnits(14), LogicalToDeviceUnits(14),
-            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(14),
-            LogicalToDeviceUnits(84));
+        int pad = LogicalToDeviceUnits(22);
+        return new Rectangle(bars.Right + LogicalToDeviceUnits(16), LogicalToDeviceUnits(16),
+            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(16),
+            LogicalToDeviceUnits(92));
     }
 
     protected override void OnPaint(PaintEventArgs e)
     {
         var g = e.Graphics;
-        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        int radius = LogicalToDeviceUnits(16);
+        // Vertical gradient card — subtle, but visibly not a flat rectangle.
+        var rect = ClientRectangle;
+        using (var background = new LinearGradientBrush(rect, Color.FromArgb(34, 34, 41), Color.FromArgb(20, 20, 25), 90f))
+        {
+            g.FillRectangle(background, rect);
+        }
 
-        Theme.StrokeRounded(g, _mode == OverlayMode.Error ? Theme.DangerStrong : Theme.CardBorder,
-            ClientRectangle, radius);
+        int radius = LogicalToDeviceUnits(20);
+        bool error = _mode == OverlayMode.Error;
+        using (var border = new Pen(error ? Theme.DangerStrong : Color.FromArgb(64, 64, 74)))
+        {
+            using var path = RoundedPath(rect, radius);
+            g.DrawPath(border, path);
+        }
 
-        // Animated equalizer bars (recording): eased toward the live level with
-        // per-bar phase, never fully empty so the row reads as one instrument.
+        // LIVE badge (bottom-right, clear of the transcript): pulsing dot + label.
+        var badgeFont = Theme.FontCaption;
+        string badgeText = error ? "ERROR" : "LIVE";
+        var badgeSize = TextRenderer.MeasureText(badgeText, badgeFont);
+        int dot = LogicalToDeviceUnits(8);
+        int badgeRight = rect.Right - LogicalToDeviceUnits(18);
+        var dotRect = new Rectangle(badgeRight - badgeSize.Width - dot - LogicalToDeviceUnits(6),
+            rect.Bottom - LogicalToDeviceUnits(26), dot, dot);
+        byte pulse = error ? (byte)255 : (byte)(150 + 100 * Math.Abs(Math.Sin(_animTick * 0.25)));
+        using (var dotBrush = new SolidBrush(Color.FromArgb(pulse, error ? Theme.DangerStrong : Theme.AccentBright)))
+        {
+            g.FillEllipse(dotBrush, dotRect);
+        }
+        TextRenderer.DrawText(g, badgeText, badgeFont, new Rectangle(dotRect.Right + LogicalToDeviceUnits(5),
+            dotRect.Top - LogicalToDeviceUnits(3), badgeSize.Width + 4, badgeSize.Height + 6),
+            error ? Theme.Danger : Theme.AccentBright,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+
+        // Equalizer bars.
         var bars = BarsRect();
         int barWidth = LogicalToDeviceUnits(6);
         int gap = LogicalToDeviceUnits(4);
@@ -136,24 +183,33 @@ public sealed class OverlayForm : Form
             int height = Math.Max(baseBarHeight, (int)(bars.Height * Math.Clamp(_barLevels[i], 0, 1)));
             int x = bars.Left + i * (barWidth + gap);
             int y = bars.Bottom - height;
-            using var fill = new SolidBrush(_mode == OverlayMode.Error ? Theme.DangerStrong : Theme.Accent);
-            Theme.FillRounded(g, fill.Color, new Rectangle(x, y, barWidth, height), corner);
+            var top = Color.FromArgb(168, error ? Theme.DangerStrong.R : Theme.AccentBright.R, error ? Theme.DangerStrong.G : Theme.AccentBright.G, error ? Theme.DangerStrong.B : Theme.AccentBright.B);
+            using (var barGradient = new LinearGradientBrush(new Rectangle(x, y, barWidth, height), top, Theme.Accent, 90f))
+            {
+                using var path = RoundedPath(new Rectangle(x, y, barWidth, height), corner);
+                g.FillPath(barGradient, path);
+            }
         }
 
         // Live transcript (realtime) — newest tail shown, oldest trimmed — or the
-        // current status when nothing was heard yet. The fine status line sits under
-        // the transcript in the caption color.
+        // current status when nothing was heard yet.
         var textRect = TextRect();
         var primary = _transcript.Length > 0 ? _transcript : _statusText;
         primary = FitTail(primary, textRect, Theme.FontPageTitle);
         TextRenderer.DrawText(g, primary, Theme.FontPageTitle, textRect,
-            _mode == OverlayMode.Error ? Theme.Danger : Theme.TextBright,
+            error ? Theme.Danger : Theme.TextBright,
             TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
-        if (_transcript.Length > 0 && _statusText.Length > 0)
+
+        // Destination + status line: "→ AppName — status" tells the user where the
+        // text will land before it lands there.
+        if (textRect.Bottom + LogicalToDeviceUnits(4) < rect.Bottom - LogicalToDeviceUnits(10))
         {
-            var statusRect = new Rectangle(textRect.Left, textRect.Bottom + LogicalToDeviceUnits(2),
+            var statusRect = new Rectangle(textRect.Left, textRect.Bottom + LogicalToDeviceUnits(4),
                 textRect.Width, LogicalToDeviceUnits(20));
-            var status = FitTail(_statusText, statusRect, Theme.FontCaption);
+            var status = _statusText.Length == 0 ? _targetApp : _targetApp.Length > 0
+                ? "→ " + _targetApp + " — " + _statusText
+                : _statusText;
+            status = FitTail(status, statusRect, Theme.FontCaption);
             TextRenderer.DrawText(g, status, Theme.FontCaption, statusRect,
                 Theme.TextCaption, TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         }
@@ -197,7 +253,7 @@ public sealed class OverlayForm : Form
             var target = Math.Max(_level * wave, 0.06 + 0.02 * Math.Sin(_animTick * 0.09 + _barPhases[i] * 2));
             _barLevels[i] += (target - _barLevels[i]) * (target > _barLevels[i] ? 0.45 : 0.16);
         }
-        Invalidate(BarsRect());
+        Invalidate();
     }
 
     private void ReassertTopMost() =>
@@ -215,6 +271,7 @@ public sealed class OverlayForm : Form
         Array.Clear(_barLevels);
         PositionOverlay();
         RebuildRegion();
+        ReassertTopMost();
         Show();
         _animTimer.Start();
     }
@@ -235,6 +292,14 @@ public sealed class OverlayForm : Form
         if (Visible && _mode == OverlayMode.Recording) Invalidate();
     }
 
+    /// <summary>Paste destination captured at recording start (foreground app name).</summary>
+    public void UpdateTargetApp(string appName)
+    {
+        if (InvokeRequired) { BeginInvoke(() => UpdateTargetApp(appName)); return; }
+        _targetApp = appName;
+        if (Visible) Invalidate();
+    }
+
     public void ShowStatus(string status)
     {
         if (InvokeRequired) { BeginInvoke(() => ShowStatus(status)); return; }
@@ -253,6 +318,7 @@ public sealed class OverlayForm : Form
         _transcript = "";
         PositionOverlay();
         RebuildRegion();
+        ReassertTopMost();
         Show();
         Invalidate();
         _errorTimer.Start();
@@ -281,10 +347,15 @@ public sealed class OverlayForm : Form
 
     [DllImport("user32.dll")]
     private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmExtendFrameIntoClientArea(IntPtr hWnd, ref MARGINS margins);
 
     private static readonly IntPtr HwndTopmost = new(-1);
     private const uint SwpNoSize = 0x1;
     private const uint SwpNoMove = 0x2;
     private const uint SwpNoActivate = 0x10;
     private const uint SwpShowWindow = 0x40;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MARGINS { public int Left, Right, Top, Bottom; }
 }
