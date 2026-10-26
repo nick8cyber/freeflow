@@ -100,6 +100,13 @@ public sealed class TrayContext : ApplicationContext
         // The same counter lands in a tiny state file (counter only, no user data)
         // for external diagnostics. An uninstalled hook is retried here every tick —
         // whatever blocked the install at startup, hotkeys come back on their own.
+        // Remember the last real foreground window (tray clicks move focus to the
+        // shell — paste-again and tray-started sessions must re-focus the window
+        // the user was typing in).
+        var focusTimer = new WinFormsTimer { Interval = 200 };
+        focusTimer.Tick += (_, _) => ForegroundTracker.Update();
+        focusTimer.Start();
+
         var statePath = Path.Combine(SettingsStore.DirectoryPath, "hookstate.json");
         var healthTimer = new WinFormsTimer { Interval = 2000 };
         var lastEvents = 0L;
@@ -161,7 +168,7 @@ public sealed class TrayContext : ApplicationContext
         menu.Items.Add(startStop);
 
         var pasteAgain = new ToolStripMenuItem("Paste again");
-        pasteAgain.Click += (_, _) => _pipeline.PasteAgain(_settings);
+        pasteAgain.Click += (_, _) => _pipeline.PasteAgain(_settings, ForegroundTracker.Last);
         menu.Items.Add(pasteAgain);
 
         _lastErrorItem = new ToolStripMenuItem("Last error: none") { Enabled = false, Visible = false };

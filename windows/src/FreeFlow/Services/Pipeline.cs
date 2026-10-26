@@ -138,7 +138,14 @@ public sealed class Pipeline
         Post(() => Cancelled?.Invoke());
     }
 
-    public void PasteAgain(AppSettings settings)
+    public void PasteAgain(AppSettings settings) => PasteAgain(settings, IntPtr.Zero);
+
+    /// <param name="restoreTarget">
+    /// Window to re-focus before pasting — for tray-menu invocations the tracker's
+    /// last real foreground window (the tray menu itself holds focus at that point,
+    /// and Ctrl+V into the taskbar loses the text).
+    /// </param>
+    public void PasteAgain(AppSettings settings, IntPtr restoreTarget)
     {
         var transcript = _lastTranscript;
         if (transcript.Length == 0) return;
@@ -147,6 +154,7 @@ public sealed class Pipeline
         {
             try
             {
+                RestoreFocusTo(restoreTarget);
                 _paste.Paste(
                     transcript, pressEnterAfter: false, settings.PreserveClipboard,
                     settings.KeepInClipboardHistory);
@@ -266,7 +274,11 @@ public sealed class Pipeline
 
         // Remember the paste destination: if focus moves elsewhere mid-dictation
         // (a stray click), the paste is restored to the window dictation started in.
-        _targetWindow = GetForegroundWindow();
+        // The tracker's window is preferred: sessions started from the tray menu
+        // would otherwise capture the taskbar as the paste destination.
+        _targetWindow = ForegroundTracker.Last != IntPtr.Zero
+            ? ForegroundTracker.Last
+            : GetForegroundWindow();
 
         Post(() => RecordingStarted?.Invoke(mode));
     }
@@ -631,16 +643,21 @@ public sealed class Pipeline
     private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, IntPtr dwExtraInfo);
 
     /// <summary>
-    /// Best-effort restore of the window dictation started in: a stray click during
-    /// recording would otherwise redirect the Ctrl+V into whatever window the user
-    /// hit. The ALT tap relaxes the foreground lock so a background process may call
-    /// SetForegroundWindow; failure leaves focus as-is (paste follows focus, like
-    /// the macOS app).
+    /// Best-effort restore of a window: a stray click during recording (or opening
+    /// the tray menu for paste-again) would otherwise redirect the Ctrl+V into
+    /// whatever window holds focus now. The ALT tap relaxes the foreground lock so
+    /// a background process may call SetForegroundWindow; failure leaves focus
+    /// as-is (paste follows focus, like the macOS app).
     /// </summary>
     private void RestoreFocusToTarget()
     {
         var target = _targetWindow;
         _targetWindow = IntPtr.Zero;
+        RestoreFocusTo(target);
+    }
+
+    private void RestoreFocusTo(IntPtr target)
+    {
         if (target == IntPtr.Zero || target == GetForegroundWindow()) return;
         try
         {
