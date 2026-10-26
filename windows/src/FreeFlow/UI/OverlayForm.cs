@@ -30,6 +30,7 @@ public sealed class OverlayForm : Form
     private string _targetApp = "";
     private OverlayMode _mode;
     private int _animTick;
+    private readonly Font _transcriptFont = new("Segoe UI", 13f);
 
     public OverlayForm()
     {
@@ -154,24 +155,6 @@ public sealed class OverlayForm : Form
             g.DrawPath(border, path);
         }
 
-        // LIVE badge (bottom-right, clear of the transcript): pulsing dot + label.
-        var badgeFont = Theme.FontCaption;
-        string badgeText = error ? "ERROR" : "LIVE";
-        var badgeSize = TextRenderer.MeasureText(badgeText, badgeFont);
-        int dot = LogicalToDeviceUnits(8);
-        int badgeRight = rect.Right - LogicalToDeviceUnits(18);
-        var dotRect = new Rectangle(badgeRight - badgeSize.Width - dot - LogicalToDeviceUnits(6),
-            rect.Bottom - LogicalToDeviceUnits(26), dot, dot);
-        byte pulse = error ? (byte)255 : (byte)(150 + 100 * Math.Abs(Math.Sin(_animTick * 0.25)));
-        using (var dotBrush = new SolidBrush(Color.FromArgb(pulse, error ? Theme.DangerStrong : Theme.AccentBright)))
-        {
-            g.FillEllipse(dotBrush, dotRect);
-        }
-        TextRenderer.DrawText(g, badgeText, badgeFont, new Rectangle(dotRect.Right + LogicalToDeviceUnits(5),
-            dotRect.Top - LogicalToDeviceUnits(3), badgeSize.Width + 4, badgeSize.Height + 6),
-            error ? Theme.Danger : Theme.AccentBright,
-            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
-
         // Equalizer bars.
         var bars = BarsRect();
         int barWidth = LogicalToDeviceUnits(6);
@@ -192,27 +175,57 @@ public sealed class OverlayForm : Form
         }
 
         // Live transcript (realtime) — newest tail shown, oldest trimmed — or the
-        // current status when nothing was heard yet.
+        // current status while nothing was heard yet. Regular weight reads clean
+        // on dark; semibold turned into mush.
         var textRect = TextRect();
         var primary = _transcript.Length > 0 ? _transcript : _statusText;
-        primary = FitTail(primary, textRect, Theme.FontPageTitle);
-        TextRenderer.DrawText(g, primary, Theme.FontPageTitle, textRect,
+        primary = FitTail(primary, textRect, _transcriptFont);
+        TextRenderer.DrawText(g, primary, _transcriptFont, textRect,
             error ? Theme.Danger : Theme.TextBright,
             TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
 
-        // Destination + status line: "→ AppName — status" tells the user where the
-        // text will land before it lands there.
-        if (textRect.Bottom + LogicalToDeviceUnits(4) < rect.Bottom - LogicalToDeviceUnits(10))
+        // Bottom-right pills: state + paste destination. No status text here —
+        // it duplicated the obvious and forced ugly ellipsises.
+        int pillHeight = LogicalToDeviceUnits(22);
+        int pillGap = LogicalToDeviceUnits(8);
+        int right = rect.Right - LogicalToDeviceUnits(18);
+        int bottom = rect.Bottom - LogicalToDeviceUnits(16);
+
+        var targetPill = DrawPill(g, "→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard"),
+            right, bottom, pillHeight, Theme.TextCaption, Color.FromArgb(38, 38, 46), null);
+        var recText = error ? "ERROR" : "REC";
+        var recColor = error ? Theme.DangerStrong : Theme.Danger;
+        DrawPill(g, recText,
+            right - targetPill.Width - pillGap, bottom, pillHeight,
+            error ? Theme.Danger : Theme.AccentBright,
+            error ? Color.FromArgb(60, 24, 24, 28) : Color.FromArgb(48, 120, 40, 44),
+            error ? Theme.DangerStrong : Theme.Danger);
+    }
+
+    /// <summary>Draws a rounded pill with an optional leading dot; returns its width.</summary>
+    private Size DrawPill(Graphics g, string text, int right, int bottom, int height,
+        Color textColor, Color backColor, Color? dotColor)
+    {
+        var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
+        int textWidth = textSize.Width;
+        int dot = dotColor.HasValue ? LogicalToDeviceUnits(8) : 0;
+        int width = textWidth + dot + (dot > 0 ? LogicalToDeviceUnits(5) : 0) + LogicalToDeviceUnits(18);
+        var rect = new Rectangle(right - width, bottom - height, width, height);
+        using (var brush = new SolidBrush(backColor))
+        using (var path = RoundedPath(rect, height / 2))
         {
-            var statusRect = new Rectangle(textRect.Left, textRect.Bottom + LogicalToDeviceUnits(4),
-                textRect.Width, LogicalToDeviceUnits(20));
-            var status = _statusText.Length == 0 ? _targetApp : _targetApp.Length > 0
-                ? "→ " + _targetApp + " — " + _statusText
-                : _statusText;
-            status = FitTail(status, statusRect, Theme.FontCaption);
-            TextRenderer.DrawText(g, status, Theme.FontCaption, statusRect,
-                Theme.TextCaption, TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            g.FillPath(brush, path);
         }
+        if (dotColor.HasValue)
+        {
+            var dotY = rect.Top + (height - dot) / 2;
+            using var dotBrush = new SolidBrush(dotColor.Value);
+            g.FillEllipse(dotBrush, new Rectangle(rect.Left + LogicalToDeviceUnits(9), dotY, dot, dot));
+        }
+        TextRenderer.DrawText(g, text, Theme.FontCaption,
+            new Rectangle(rect.Left + LogicalToDeviceUnits(9) + dot, rect.Top, textWidth + 4, height),
+            textColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+        return new Size(width, height);
     }
 
     /// <summary>Trims a long string from its START so the newest words stay visible;
