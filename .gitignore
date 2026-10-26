@@ -3,3 +3,9 @@ build/
 *.swp
 .env
 .build
+
+# Windows build artifacts
+windows/dist/
+windows/**/bin/
+windows/**/obj/
+*.user
