@@ -42,7 +42,7 @@ public sealed class OverlayForm : Form
         // The level bar repaints up to 30×/s; without double buffering each repaint
         // erases the background first and the whole card visibly flickers.
         DoubleBuffered = true;
-        Size = new Size(540 * DeviceDpi / 96, 112 * DeviceDpi / 96);
+        Size = new Size(540 * DeviceDpi / 96, MinHeight * DeviceDpi / 96);
         Text = "FreeFlow Overlay"; // invisible (no caption) — lets test tooling find the window
 
         // Non-activating + transparent-to-input so dictation targets keep focus.
@@ -115,6 +115,33 @@ public sealed class OverlayForm : Form
         path.AddArc(bounds.Left, bounds.Bottom - d, d, d, 90, 90);
         path.CloseFigure();
         return path;
+    }
+
+    // Card height adapts to the transcript: 1 line of text -> compact card,
+    // up to 3 lines -> grows. Top edge stays fixed (card grows downward).
+    private const int MinHeight = 64;
+    private const int MaxHeight = 136;
+    private const int ChromeHeight = 58; // top pad + gap + pills row + bottom pad
+
+    /// <summary>Resizes the card to the current transcript (1..3 lines).</summary>
+    private void UpdateSize()
+    {
+        var textWidth = ClientRectangle.Width - BarsRect().Right - LogicalToDeviceUnits(16)
+            - LogicalToDeviceUnits(22);
+        int textHeight = 0;
+        if (_transcript.Length > 0)
+            textHeight = TextRenderer.MeasureText(FitTail(_transcript,
+                new Rectangle(0, 0, textWidth, LogicalToDeviceUnits(200)), _transcriptFont),
+                _transcriptFont, new Size(textWidth, int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix).Height;
+        var needed = ChromeHeight + Math.Min(Math.Max(textHeight, LogicalToDeviceUnits(20)), LogicalToDeviceUnits(92));
+        var newHeight = Math.Clamp(needed, MinHeight, MaxHeight) * DeviceDpi / 96;
+        if (Height != newHeight)
+        {
+            Height = newHeight;
+            RebuildRegion();
+            PositionOverlay();
+        }
     }
 
     private Rectangle BarsRect()
@@ -282,6 +309,7 @@ public sealed class OverlayForm : Form
         _level = 0;
         _transcript = "";
         Array.Clear(_barLevels);
+        UpdateSize();
         PositionOverlay();
         RebuildRegion();
         ReassertTopMost();
@@ -302,6 +330,7 @@ public sealed class OverlayForm : Form
         _transcript = transcript.Length > MaxStoredTranscriptChars
             ? "…" + transcript[^MaxStoredTranscriptChars..]
             : transcript;
+        UpdateSize();
         if (Visible && _mode == OverlayMode.Recording) Invalidate();
     }
 
@@ -318,6 +347,7 @@ public sealed class OverlayForm : Form
         if (InvokeRequired) { BeginInvoke(() => ShowStatus(status)); return; }
         _statusText = status;
         if (!Visible) ShowRecording();
+        UpdateSize();
         Invalidate();
     }
 
