@@ -42,7 +42,7 @@ public sealed class OverlayForm : Form
         // The level bar repaints up to 30×/s; without double buffering each repaint
         // erases the background first and the whole card visibly flickers.
         DoubleBuffered = true;
-        Size = new Size(700 * DeviceDpi / 96, 112 * DeviceDpi / 96);
+        Size = new Size(700 * DeviceDpi / 96, 84 * DeviceDpi / 96);
         Text = "FreeFlow Overlay"; // invisible (no caption) — lets test tooling find the window
 
         // Non-activating + transparent-to-input so dictation targets keep focus.
@@ -122,7 +122,7 @@ public sealed class OverlayForm : Form
         int pad = LogicalToDeviceUnits(22);
         int barWidth = LogicalToDeviceUnits(6);
         int gap = LogicalToDeviceUnits(4);
-        return new Rectangle(pad, LogicalToDeviceUnits(17),
+        return new Rectangle(pad, LogicalToDeviceUnits(14),
             BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(56));
     }
 
@@ -131,26 +131,12 @@ public sealed class OverlayForm : Form
         var bars = BarsRect();
         int pad = LogicalToDeviceUnits(22);
         return new Rectangle(bars.Right + LogicalToDeviceUnits(16), LogicalToDeviceUnits(14),
-            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(16) - PillsStripWidth(),
-            LogicalToDeviceUnits(60));
+            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(16) - PillColumnWidth,
+            LogicalToDeviceUnits(56));
     }
 
-    /// <summary>Width reserved for the state + destination pills on the first line.</summary>
-    private int PillsStripWidth()
-    {
-        int gap = LogicalToDeviceUnits(8);
-        return MeasurePill("→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard")).Width
-            + gap + MeasurePill(_mode == OverlayMode.Error ? "ERROR" : "REC").Width
-            + LogicalToDeviceUnits(18);
-    }
-
-    private Size MeasurePill(string text)
-    {
-        var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
-        int dot = LogicalToDeviceUnits(8);
-        return new Size(textSize.Width + dot + LogicalToDeviceUnits(5) + LogicalToDeviceUnits(18),
-            LogicalToDeviceUnits(22));
-    }
+    /// <summary>Narrow right column holding the two stacked pills.</summary>
+    private const int PillColumnWidth = 120;
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -201,21 +187,21 @@ public sealed class OverlayForm : Form
             error ? Theme.Danger : Theme.TextBright,
             TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
 
-        // Top-right pills, same line as the transcript's first row: state + paste
-        // destination. The text rect is narrowed by their width, so nothing overlaps.
+        // Right column, two rows: REC on the first, destination under it — both fit
+        // within the two transcript rows, so the card stays short.
         int pillHeight = LogicalToDeviceUnits(22);
-        int pillGap = LogicalToDeviceUnits(8);
-        int pillTop = rect.Top + LogicalToDeviceUnits(12);
-        int right = rect.Right - LogicalToDeviceUnits(18);
+        int right = rect.Right - LogicalToDeviceUnits(14);
+        int columnLeft = rect.Right - LogicalToDeviceUnits(14) - PillColumnWidth;
 
-        var targetPill = DrawPill(g, "→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard"),
-            right, pillTop, pillHeight, Theme.TextCaption, Color.FromArgb(38, 38, 46), null);
-        var recText = error ? "ERROR" : "REC";
-        DrawPill(g, recText,
-            right - targetPill.Width - pillGap, pillTop, pillHeight,
+        DrawPill(g, error ? "ERROR" : "REC",
+            right, rect.Top + LogicalToDeviceUnits(12), pillHeight,
             error ? Theme.Danger : Theme.AccentBright,
             error ? Color.FromArgb(60, 24, 24, 28) : Color.FromArgb(48, 120, 40, 44),
             error ? Theme.DangerStrong : Theme.Danger);
+        DrawPill(g, "→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard"),
+            right, rect.Top + LogicalToDeviceUnits(40), pillHeight,
+            Theme.TextCaption, Color.FromArgb(38, 38, 46), null);
+        _ = columnLeft;
     }
 
     /// <summary>Draws a rounded pill with an optional leading dot; returns its width.</summary>
@@ -225,7 +211,8 @@ public sealed class OverlayForm : Form
         var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
         int textWidth = textSize.Width;
         int dot = dotColor.HasValue ? LogicalToDeviceUnits(8) : 0;
-        int width = textWidth + dot + (dot > 0 ? LogicalToDeviceUnits(5) : 0) + LogicalToDeviceUnits(18);
+        int width = Math.Min(textWidth + dot + (dot > 0 ? LogicalToDeviceUnits(5) : 0) + LogicalToDeviceUnits(18),
+            PillColumnWidth);
         var rect = new Rectangle(right - width, top, width, height);
         using (var brush = new SolidBrush(backColor))
         using (var path = RoundedPath(rect, height / 2))
@@ -239,8 +226,8 @@ public sealed class OverlayForm : Form
             g.FillEllipse(dotBrush, new Rectangle(rect.Left + LogicalToDeviceUnits(9), dotY, dot, dot));
         }
         TextRenderer.DrawText(g, text, Theme.FontCaption,
-            new Rectangle(rect.Left + LogicalToDeviceUnits(9) + dot, rect.Top, textWidth + 4, height),
-            textColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPrefix);
+            new Rectangle(rect.Left + LogicalToDeviceUnits(9) + dot, rect.Top, width - dot - LogicalToDeviceUnits(14), height),
+            textColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         return new Size(width, height);
     }
 
