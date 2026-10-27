@@ -176,6 +176,10 @@ public sealed class TrayContext : ApplicationContext
         pasteAgain.Click += (_, _) => _pipeline.PasteAgain(_settings, ForegroundTracker.Last);
         menu.Items.Add(pasteAgain);
 
+        var retryRecording = new ToolStripMenuItem("Paste last recording");
+        retryRecording.Click += (_, _) => _pipeline.RetryLastRecording(_settings);
+        menu.Items.Add(retryRecording);
+
         _lastErrorItem = new ToolStripMenuItem("Last error: none") { Enabled = false, Visible = false };
         menu.Items.Add(_lastErrorItem);
 

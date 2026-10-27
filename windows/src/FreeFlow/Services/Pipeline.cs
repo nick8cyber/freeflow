@@ -357,6 +357,8 @@ public sealed class Pipeline
             catch (ProviderException ex)
             {
                 var message = FriendlyErrors.Describe(ex) + $" (live: {live?.DescribeState() ?? "off"})";
+                if (File.Exists(LastFailedRecordingPath))
+                    message += " — запись сохранена: «Paste last recording» в меню трея";
                 RecordHistory(settings, _lastTranscript, "", $"Error: {message}", "none");
                 Post(() => ErrorOccurred?.Invoke(message));
             }
@@ -376,11 +378,17 @@ public sealed class Pipeline
         });
     }
 
+    /// <summary>Local copy of the last recording whose transcription failed — the
+    /// user can retry it from the tray menu instead of losing the dictation.</summary>
+    public static string LastFailedRecordingPath => Path.Combine(
+        SettingsStore.DirectoryPath, "last-failed.wav");
+
     private async Task RunProcessingAsync(
         string wavPath, bool editIntent, AppSettings settings, CancellationToken ct,
         Task<string> contextTask, LiveTranscriptionService? live)
     {
         TranscriptionOutcome transcription;
+        var transcriptionCompleted = false;
         try
         {
             // Realtime transcript first: when the Live session completed its setup
@@ -413,9 +421,17 @@ public sealed class Pipeline
                 Post(() => StatusChanged?.Invoke($"Transcribing… (live: {live?.DescribeState() ?? "off"})"));
                 transcription = await _router.TranscribeAsync(wavPath, ct);
             }
+            transcriptionCompleted = true;
         }
         finally
         {
+            if (!transcriptionCompleted)
+            {
+                // The dictation failed — keep the audio locally so the user can
+                // retry it from the tray menu instead of losing it entirely.
+                try { File.Copy(wavPath, LastFailedRecordingPath, overwrite: true); }
+                catch (Exception) { }
+            }
             try { File.Delete(wavPath); } catch (Exception) { }
         }
 
@@ -623,6 +639,35 @@ public sealed class Pipeline
             finalText,
             status,
             transcription.Provider));
+    }
+
+    /// <summary>Re-transcribes the last failed recording (tray menu) and pastes it.
+    /// Only possible when the app is idle; the file is removed after a successful
+    /// transcription so a stale recording cannot be pasted twice by accident.</summary>
+    public void RetryLastRecording(AppSettings settings)
+    {
+        if (IsBusy) return;
+        var path = LastFailedRecordingPath;
+        if (!File.Exists(path)) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                Post(() => StatusChanged?.Invoke("Retrying last recording…"));
+                var transcription = await _router.TranscribeAsync(path, CancellationToken.None);
+                var raw = transcription.Text.Trim();
+                if (raw.Length == 0) return;
+                _lastTranscript = raw;
+                Post(() => StatusChanged?.Invoke($"Retried with {transcription.Provider}"));
+                _paste.Paste(raw, pressEnterAfter: false, settings.PreserveClipboard,
+                    settings.KeepInClipboardHistory);
+                File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                Post(() => ErrorOccurred?.Invoke("Retry failed: " + ex.Message));
+            }
+        });
     }
 
     /// <summary>"Gemini (model)" / "Groq (model)" → the provider identifier used for exclusions.</summary>

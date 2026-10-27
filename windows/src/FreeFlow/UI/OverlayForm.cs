@@ -134,8 +134,8 @@ public sealed class OverlayForm : Form
         int pad = LogicalToDeviceUnits(16);
         int barWidth = LogicalToDeviceUnits(6);
         int gap = LogicalToDeviceUnits(4);
-        return new Rectangle(pad, LogicalToDeviceUnits(18),
-            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(44));
+        return new Rectangle(pad, LogicalToDeviceUnits(20),
+            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(64));
     }
 
     private Rectangle TextRect()
@@ -144,7 +144,7 @@ public sealed class OverlayForm : Form
         int pad = LogicalToDeviceUnits(22);
         return new Rectangle(bars.Right + LogicalToDeviceUnits(14), LogicalToDeviceUnits(10),
             ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(14) - PillColumnWidth,
-            LogicalToDeviceUnits(52));
+            LogicalToDeviceUnits(74));
     }
 
     /// <summary>Narrow right column holding the two stacked pills — sized to the
