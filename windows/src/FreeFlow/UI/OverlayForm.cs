@@ -306,7 +306,7 @@ public sealed class OverlayForm : Form
         }
         int dot = dotColor.HasValue ? S(LogicalPillDot) : 0;
         int textLeft = rect.Left + S(LogicalPillPad);
-        if (dot > 0)
+        if (dotColor.HasValue)
         {
             var dotY = rect.Top + (height - dot) / 2;
             using var dotBrush = new SolidBrush(dotColor.Value);
