@@ -147,15 +147,17 @@ binary-searches the SMALLEST fitting cut point — the longest visible suffix. D
 `--demo-overlay` (cycles states, works alongside a running tray instance) and
 `design/capture-overlay.ps1` (screenshots all states on every monitor).
 
-### First-dictation-after-idle resilience (ProviderRouter/AudioRecorder)
+### Transcription retry policy + first-dictation-after-idle resilience (ProviderRouter/AudioRecorder)
 
-A cold upstream (or a pooled connection the server closed) can fail the FIRST transcription
-request after a long idle while the same request seconds later succeeds. Gemini's 200-without-
-text is `ProviderFailureKind.EmptyOutput`; `ProviderRouter.TranscribeAsync` retries the same
-Gemini transcription ONCE on EmptyOutput/Network before the Groq/error fallback. Independently,
-if the first capture session after a device idle delivers zero buffers, `AudioRecorder`'s
-watchdog silently re-opens the capture ladder once. Verified with a local TCP stub
-(ProviderRetryTests) — no live provider calls.
+Each transcription provider (Gemini, then Groq) gets the initial request plus TWO same-provider
+retries for every TRANSIENT failure: empty result (a cold upstream answers 200 with no text —
+the "first dictation after idle fails, second works" signature), network drop, timeout,
+malformed response, and HTTP 5xx. Deterministic failures fail fast with no retry — rate limits
+(cooldown + fallback chain own those), HTTP 4xx client errors (bad key, wrong URL) and
+cancellations — so quota is never burned on guaranteed-identical repeats. Independently, if the
+first capture session after a device idle delivers zero buffers, `AudioRecorder`'s watchdog
+silently re-opens the capture ladder once. Verified with a local TCP stub (ProviderRetryTests)
+— no live provider calls.
 
 ## Code map
 

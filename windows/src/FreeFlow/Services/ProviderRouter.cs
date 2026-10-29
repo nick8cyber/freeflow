@@ -53,6 +53,23 @@ public sealed class ProviderRouter
     // Transcription: Gemini primary → Groq fallback.
     // ------------------------------------------------------------------
 
+    /// <summary>Total transcription attempts per provider: the initial request plus
+    /// two retries (user policy — a failed dictation is always worth repeating on
+    /// the same provider; a manual repeat has resolved every transient failure:
+    /// cold upstream after idle, dropped pooled connection, truncated response).</summary>
+    private const int TranscribeAttempts = 3;
+
+    /// <summary>Errors a repeat can actually fix. Deterministic failures are
+    /// retried nowhere: cancellations, rate limits (the cooldown + fallback chain
+    /// owns those) and HTTP 4xx client errors (bad key, wrong URL) fail fast so
+    /// quota is not burned on guaranteed-identical repeats.</summary>
+    private static bool ShouldRetrySameProvider(ProviderException ex) =>
+        ex.Kind is ProviderFailureKind.EmptyOutput
+            or ProviderFailureKind.Network
+            or ProviderFailureKind.Timeout
+            or ProviderFailureKind.InvalidResponse
+        || (ex.Kind == ProviderFailureKind.Http && (int?)ex.StatusCode >= 500);
+
     public async Task<TranscriptionOutcome> TranscribeAsync(string wavPath, CancellationToken ct)
     {
         var s = _settings();
@@ -72,27 +89,19 @@ public sealed class ProviderRouter
                 // Custom vocabulary is passed natively to the transcription model
                 // (audioTranscriptionConfig.customVocabulary), capped at 100 entries.
                 var vocabulary = TextUtil.ParseVocabulary(s.CustomVocabulary).Take(100).ToArray();
-                try
+                for (var attempt = 1; ; attempt++)
                 {
-                    var text = await gemini.TranscribeAsync(
-                        wavBytes, model, s.TranscriptionLanguage, vocabulary, s.TranscriptionTimeoutSeconds, ct);
-                    return new TranscriptionOutcome(text, "Gemini", model);
-                }
-                catch (ProviderException ex) when (
-                    ex.Kind == ProviderFailureKind.EmptyOutput ||
-                    ex.Kind == ProviderFailureKind.Network)
-                {
-                    // First request after a long idle can hit a cold upstream that
-                    // answers 200 with no text, or a pooled connection the server
-                    // closed while idle — while the SAME request seconds later
-                    // succeeds ("the second dictation always works"). One immediate
-                    // retry recovers the dictation; a second consecutive failure
-                    // means the audio genuinely has no speech, and the normal
-                    // fallback chain (Groq / error) takes over.
-                    lastError = ex;
-                    var retry = await gemini.TranscribeAsync(
-                        wavBytes, model, s.TranscriptionLanguage, vocabulary, s.TranscriptionTimeoutSeconds, ct);
-                    return new TranscriptionOutcome(retry, "Gemini", model);
+                    try
+                    {
+                        var text = await gemini.TranscribeAsync(
+                            wavBytes, model, s.TranscriptionLanguage, vocabulary, s.TranscriptionTimeoutSeconds, ct);
+                        return new TranscriptionOutcome(text, "Gemini", model);
+                    }
+                    catch (ProviderException ex) when (
+                        attempt < TranscribeAttempts && ShouldRetrySameProvider(ex))
+                    {
+                        lastError = ex;
+                    }
                 }
             }
             catch (ProviderException ex) when (ex.Kind != ProviderFailureKind.Cancelled)
@@ -107,9 +116,20 @@ public sealed class ProviderRouter
             var model = s.TranscriptionModelGroq;
             try
             {
-                var text = await groq.TranscribeAsync(
-                    wavPath, model, s.TranscriptionLanguage, s.TranscriptionTimeoutSeconds, ct);
-                return new TranscriptionOutcome(text, "Groq", model);
+                for (var attempt = 1; ; attempt++)
+                {
+                    try
+                    {
+                        var text = await groq.TranscribeAsync(
+                            wavPath, model, s.TranscriptionLanguage, s.TranscriptionTimeoutSeconds, ct);
+                        return new TranscriptionOutcome(text, "Groq", model);
+                    }
+                    catch (ProviderException ex) when (
+                        attempt < TranscribeAttempts && ShouldRetrySameProvider(ex))
+                    {
+                        lastError = ex;
+                    }
+                }
             }
             catch (ProviderException ex) when (ex.Kind != ProviderFailureKind.Cancelled)
             {
