@@ -8,7 +8,8 @@
 
 ## Verification
 
-- [ ] `make check`
+- [ ] `make check` (macOS changes)
+- [ ] For `windows/` changes: `cd windows && build.cmd` (build + `dotnet test` + publish) instead of `make check`
 - [ ] `git diff --check`
 - [ ] Focused regression test added or updated, or no-test reason documented below
 - [ ] Manual app verification completed, if required

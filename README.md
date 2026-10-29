@@ -27,6 +27,19 @@
 
 FreeFlow is a free Mac dictation app inspired by [Wispr Flow](https://wisprflow.ai/), [Superwhisper](https://superwhisper.com/), and [Monologue](https://www.monologue.to/). It gives you fast AI transcription, context-aware cleanup, and voice-driven text editing without a monthly subscription.
 
+## Platforms
+
+FreeFlow ships as **two separate codebases with separate documentation** — features differ
+between them, and each README is authoritative for its platform:
+
+- **macOS** (this document): the native Swift menu-bar app at the repository root. Download,
+  quick start, and settings below all refer to the macOS app.
+- **Windows**: a native C# / .NET 8 tray-application port living in [`windows/`](windows/).
+  It has its own spec, architecture notes, diagnostics, and manual-test checklist in
+  [windows/README.md](windows/README.md) — including its own dictation pipeline (Gemini Live
+  streaming, per-provider retry policy) that differs from the macOS app. Build it with
+  `windows/build.cmd`, not `make`.
+
 ## Quick Start
 
 1. Download the app from above or [click here](https://github.com/zachlatta/freeflow/releases/latest/download/FreeFlow.dmg)

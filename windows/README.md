@@ -3,6 +3,11 @@
 Windows migration of [FreeFlow](https://github.com/zachlatta/freeflow) (macOS dictation app),
 rewritten as a native C# / .NET 8 tray application (WinForms, no Xcode/SPM dependency).
 
+> This document is the authoritative spec for the Windows port. The repository-root
+> `README.md` and `AGENTS.md` describe the **macOS** app only — the platforms' features
+> intentionally differ (dictation protocol, providers, settings), so never treat one as
+> documentation for the other.
+
 **Dictation runs on Google Gemini Live** (`gemini-3.5-transcribe-live` over the native
 BidiGenerateContent WebSocket). Groq (whisper-large-v3) is the optional transcription fallback;
 the non-live Gemini `gemini-3.5-transcribe` is the built-in record-then-transcribe fallback.
@@ -52,12 +57,18 @@ The published exe is a single ~63 MB file (compression on, no symbols).
    (press-release-press to stop). **Esc** cancels a session (toggle mode only).
 3. Settings → Behavior → Microphone: **pin the input device** (recommended — the Windows default
    endpoint is a lottery when Bluetooth headsets connect and leave). The overlay card appears at
-   the top center of the monitor where the cursor is and re-asserts topmost every 0.5 s so
+   the top center of the **paste-target window's monitor** (the one you are typing into; falls
+   back to the cursor's monitor when unknown) and re-asserts topmost every 0.5 s so
    pinned-topmost windows (pinned Telegram etc.) cannot cover it.
 
 Settings live in `%APPDATA%\FreeFlow\settings.json`; API keys are DPAPI-encrypted at rest
 (`dpapi:` prefix, CurrentUser scope). Local pipeline history (last 20 entries) is
 `%APPDATA%\FreeFlow\history.json`.
+
+**Save-on-failure:** when transcription fails, the recording is kept at
+`%APPDATA%\FreeFlow\last-failed.wav` and the tray menu gains a **Paste last recording** item
+that re-transcribes and pastes it (the file is deleted after a successful retry, so a stale
+recording cannot be pasted twice by accident).
 
 ## Architecture
 
@@ -181,6 +192,8 @@ windows/
       GroqClient.cs / ProviderRouter.cs    Groq fallback + provider routing + cooldowns
       AudioRecorder.cs                     NAudio capture, format ladder, chunk events, watchdog
       MicDeviceResolver.cs                 pinned-device name → MME index resolution
+      ForegroundTracker.cs                 last real foreground window (paste target for tray
+                                           menu actions; shell windows excluded)
       HotkeyEngine.cs                      LL hook, edge-aware matching, suppression, telemetry
       PasteService.cs                      clipboard markers, Ctrl+V SendInput, restore
       ContextService.cs                    foreground app metadata (+ opt-in screenshot)
@@ -189,9 +202,17 @@ windows/
     UI/
       TrayContext.cs                       tray, wiring, hook health, autostart
       OverlayForm.cs                       top-center live overlay (equalizer + transcript)
+      OverlayTextFit.cs                    transcript tail-fitting (longest visible suffix,
+                                           regression-tested)
       SettingsForm(.Pages).cs              providers/shortcuts/behavior/vocabulary/history
       SetupForm.cs / HotkeyBox.cs          first-run wizard; shortcut capture control
-  tests/FreeFlow.Tests/                    deterministic tests (ports of Swift core tests + new logic)
+  tests/FreeFlow.Tests/                    deterministic tests (ports of Swift core tests + new
+                                           logic: retry policy via local TCP stub, tail-fitting,
+                                           resampler, protocol builders, hook decisions)
+  design/
+    capture.ps1                            settings-UI screenshot helper (launch/shot/click)
+    capture-overlay.ps1                    overlay demo screenshots: all states × every monitor
+    zoom-crop.ps1                          crop+zoom a PNG region for inspection
 ```
 
 ## Diagnostics
@@ -215,15 +236,24 @@ the macOS app); disable in Settings → Behavior.
 ## Manual test checklist
 
 Automated tests cover the pure logic (accumulators, resampler, protocol builders, hook
-decision, resolver, text ports). These need a human at the machine — items checked
-[✓] were verified live on this machine (2026-10-26/27):
+decision, resolver, text ports, provider retry policy via a local TCP stub, transcript
+tail-fitting with real GDI measurements). These need a human at the machine — items checked
+[✓] were verified live on this machine (2026-10-26–30):
 
 - [x] Hold Right Alt → live transcript in the overlay; release → paste at cursor (~1.5 s).
 - [x] Multi-pause dictation keeps every segment (no lost beginning).
 - [x] Pinned Telegram (topmost) does not cover the overlay.
-- [x] Overlay appears top-center on the cursor's monitor; input field stays clear.
+- [x] Overlay appears top-center on the paste-target's monitor; input field stays clear.
+- [x] Overlay renders identically on 100% and 150% monitors in all states — recording
+      (2-line transcript, pills), status, error (capture-overlay.ps1 screenshots, 2026-10-29).
 - [x] Hotkeys survive app restarts; stuck-modifier state self-clears (hook fixes).
+- [x] Transcription retry policy: transient failures retried twice per provider, rate limits
+      and 4xx fail fast (ProviderRetryTests, local stub).
+- [ ] First dictation after a LONG idle pastes without a manual repeat (policy shipped
+      2026-10-30; needs a real idle period to confirm).
 - [ ] Ctrl+Caps Lock toggle mode, Esc cancel.
 - [ ] Groq fallback path with a Groq key configured.
+- [ ] Save-on-failure: last-failed.wav kept, tray "Paste last recording" re-transcribes and
+      deletes the file.
 - [ ] Clipboard restore after paste; dictation hidden from clipboard history by default.
 - [ ] Edit Mode (select text → "make it shorter").

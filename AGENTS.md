@@ -4,6 +4,17 @@ FreeFlow is a native macOS menu-bar dictation app built directly with `swiftc`
 and Make. It does not use Swift Package Manager or an Xcode project. Preserve
 that architecture unless the user explicitly approves a migration.
 
+**Platform split.** This guide covers the macOS app at the repository root only.
+The `windows/` directory is a separate C# / .NET 8 tray-application port with
+its own architecture spec (`windows/README.md`) and its own verification
+(`cd windows && build.cmd` — runs `dotnet build`, `dotnet test`, and publishes
+the dist exe; deterministic tests live in `windows/tests/`). `make check`, the
+Swift sources, and the release/signing workflows described below do not apply
+to `windows/`; the privacy and security rules apply to both platforms. The two
+platforms' features intentionally differ (dictation protocol, providers,
+settings surface) — never port a change between them "for parity" without an
+explicit request, and keep each platform's documentation separate.
+
 ## Repository map
 
 - `Sources/App.swift` and `Sources/AppDelegate.swift`: app lifecycle.
