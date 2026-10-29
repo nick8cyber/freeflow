@@ -132,10 +132,30 @@ MediaFoundationResampler.
 
 ### Overlay (UI/OverlayForm.cs)
 
-Top-center card on the cursor's monitor (the bottom is where input fields live), position
-clamped into the monitor's working area (mixed-DPI multi-monitor setups shift naive
-coordinates). Animated 5-bar equalizer, live interim transcript (tail shown, start trimmed),
-status line; double-buffered; topmost re-asserted during recording.
+Top-center card anchored to the paste-target window's monitor (`AnchorScreen`, falls back to
+the cursor), position clamped into the monitor's working area. Animated 5-bar equalizer, live
+interim transcript (tail shown, start trimmed), status line; double-buffered; topmost
+re-asserted during recording.
+
+Scaling contract (v8): ONE logical design (constants at 96 DPI) and ONE scale source — the
+effective DPI of the presenting monitor (`GetDpiForMonitor`), never the form's `DeviceDpi`,
+which lies for a borderless form shown across monitors. Fonts are pixel-sized
+(`GraphicsUnit.Pixel`) and the SAME instance measures and draws a string, so measurement and
+rendering can never disagree on mixed-DPI setups. The transcript block and equalizer sit
+strictly inside the card by construction; `FitTail` (UI/OverlayTextFit.cs, regression-tested)
+binary-searches the SMALLEST fitting cut point — the longest visible suffix. Dev tooling:
+`--demo-overlay` (cycles states, works alongside a running tray instance) and
+`design/capture-overlay.ps1` (screenshots all states on every monitor).
+
+### First-dictation-after-idle resilience (ProviderRouter/AudioRecorder)
+
+A cold upstream (or a pooled connection the server closed) can fail the FIRST transcription
+request after a long idle while the same request seconds later succeeds. Gemini's 200-without-
+text is `ProviderFailureKind.EmptyOutput`; `ProviderRouter.TranscribeAsync` retries the same
+Gemini transcription ONCE on EmptyOutput/Network before the Groq/error fallback. Independently,
+if the first capture session after a device idle delivers zero buffers, `AudioRecorder`'s
+watchdog silently re-opens the capture ladder once. Verified with a local TCP stub
+(ProviderRetryTests) — no live provider calls.
 
 ## Code map
 
