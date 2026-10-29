@@ -9,3 +9,6 @@ windows/dist/
 windows/**/bin/
 windows/**/obj/
 *.user
+
+# Generated overlay verification screenshots
+windows/design/overlay-shots/

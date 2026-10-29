@@ -7,16 +7,49 @@ namespace FreeFlow.UI;
 /// <summary>
 /// Borderless, non-activating recording overlay (Windows analog of the macOS
 /// RecordingOverlay): a dark gradient card with a real DWM drop shadow, pinned to
-/// the TOP of the cursor's monitor — the bottom, where input fields live, stays
-/// clear — showing an animated equalizer, the live interim transcript (tail
-/// first), the paste destination ("→ App") and a LIVE badge. Re-asserts topmost
-/// during recording so pinned-topmost windows cannot cover it.
+/// the TOP of the paste-target's monitor — the bottom, where input fields live,
+/// stays clear — showing an animated equalizer, the live interim transcript
+/// (tail first), the paste destination ("→ App") and a REC/ERROR badge.
+/// Re-asserts topmost during recording so pinned-topmost windows cannot cover it.
+///
+/// Scaling contract: the card has ONE logical design (the constants below, at
+/// 96 DPI) and ONE scale source — the effective DPI of the monitor it is
+/// presented on, read straight from that monitor (GetDpiForMonitor). Every
+/// metric, the fonts and the window region derive from that scale. Fonts are
+/// pixel-sized (GraphicsUnit.Pixel) and the SAME instance measures and draws a
+/// given string: GDI point-size fonts resolve through whichever DC DPI each
+/// call hits, so with point fonts the card could measure at one scale and
+/// paint at another on mixed-DPI setups — pills ellipsised into smudges and
+/// the transcript clipped at the card edge. WinForms' own per-monitor rescale
+/// of the form is always followed by an idempotent re-snap to the canonical
+/// size (a pure function of the monitor DPI), so scales cannot compound.
 /// </summary>
 public sealed class OverlayForm : Form
 {
     private enum OverlayMode { Recording, Error }
 
     private const int BarCount = 5;
+
+    // Logical design @96 DPI — every use goes through S().
+    private const int LogicalWidth = 480;
+    private const int LogicalHeight = 64;
+    private const int LogicalEdgePad = 10;        // card side padding
+    private const int LogicalTextVPad = 9;        // transcript block vertical padding
+    private const int LogicalBarLeft = 14;        // equalizer block x
+    private const int LogicalBarSize = 4;         // bar width
+    private const int LogicalBarGap = 3;
+    private const int LogicalBarBoxHeight = 36;   // equalizer block height (full level)
+    private const int LogicalBarMinHeight = 6;    // idle bar
+    private const int LogicalBarsWidth = 32;      // 5 bars + 4 gaps
+    private const int LogicalGapBarsToText = 12;
+    private const int LogicalPillHeight = 16;
+    private const int LogicalPillGap = 4;
+    private const int LogicalPillPad = 9;         // pill inner side padding
+    private const int LogicalPillDot = 6;
+    private const int LogicalPillDotGap = 5;
+    private const int LogicalGapTextToPills = 8;
+    private const int LogicalMaxPillWidth = 150;  // destination pill cap; longer names ellipsize
+    private const int LogicalRegionRadius = 12;
     private const int MaxStoredTranscriptChars = 400;
 
     private readonly WinFormsTimer _hideTimer = new() { Interval = 1200 };
@@ -30,7 +63,10 @@ public sealed class OverlayForm : Form
     private string _targetApp = "";
     private OverlayMode _mode;
     private int _animTick;
-    private readonly Font _transcriptFont = new("Segoe UI", 10f);
+
+    private uint _dpi;
+    private Font _transcriptFont = null!;
+    private Font _pillFont = null!;
 
     public OverlayForm()
     {
@@ -42,7 +78,7 @@ public sealed class OverlayForm : Form
         // The level bar repaints up to 30×/s; without double buffering each repaint
         // erases the background first and the whole card visibly flickers.
         DoubleBuffered = true;
-        ApplyCurrentMonitorSize();
+        EnsureFonts(96);
         Text = "FreeFlow Overlay"; // invisible (no caption) — lets test tooling find the window
 
         // Non-activating + transparent-to-input so dictation targets keep focus.
@@ -76,22 +112,22 @@ public sealed class OverlayForm : Form
     {
         base.OnHandleCreated(e);
         RebuildRegion();
-        // Moving between monitors with different scales fires WM_DPICHANGED and
-        // WinForms rescales the form AFTER our PositionOverlay ran — re-clamp here,
-        // or the card ends up half outside the target monitor ("half cut off").
-        DpiChanged += (_, _) =>
-        {
-            // WinForms rescales the form on WM_DPICHANGED; snap the size to the
-            // canonical value for the new DPI — compounding scales leave parts of
-            // the card outside its Region (transparent, "half cut off").
-            ApplyCurrentMonitorSize();
-            PositionOverlay();
-            Invalidate();
-        };
         // Borderless forms get no system shadow; extending frame by one bottom pixel
         // brings the standard DWM drop shadow back.
         var margins = new MARGINS { Bottom = 1 };
         DwmExtendFrameIntoClientArea(Handle, ref margins);
+        // WinForms rescales the form AFTER a monitor move (WM_DPICHANGED); snap the
+        // whole card — size, fonts, region, position — back to the canonical values
+        // for the new DPI. The snap is a pure function of that DPI, so whatever
+        // WinForms just multiplied cannot compound into a wrong scale.
+        DpiChanged += (_, args) =>
+        {
+            EnsureFonts((uint)args.DeviceDpiNew);
+            Size = CanonicalSize;
+            PositionOverlay();
+            RebuildRegion();
+            Invalidate();
+        };
     }
 
     protected override void OnResize(EventArgs e)
@@ -106,13 +142,49 @@ public sealed class OverlayForm : Form
         _hideTimer.Dispose();
         _errorTimer.Dispose();
         _animTimer.Dispose();
+        _transcriptFont.Dispose();
+        _pillFont.Dispose();
+    }
+
+    // ------------------------------------------------------------- scale & fonts
+
+    /// <summary>Logical → device pixels for the monitor the card is presented on.</summary>
+    private int S(float logical) => (int)MathF.Round(logical * _dpi / 96f);
+
+    private Size CanonicalSize => new(S(LogicalWidth), S(LogicalHeight));
+
+    private void EnsureFonts(uint dpi)
+    {
+        if (dpi == _dpi && _transcriptFont != null) return;
+        _dpi = dpi;
+        // Pixel-sized em heights (10pt ≈ 13.3px, 8.25pt ≈ 11px @96 DPI): a pixel
+        // font renders identically on every DC, so measuring and drawing always
+        // agree — regardless of which monitor's DPI a GDI call resolves through.
+        _transcriptFont?.Dispose();
+        _pillFont?.Dispose();
+        _transcriptFont = new Font("Segoe UI", MathF.Round(13.3f * _dpi / 96), GraphicsUnit.Pixel);
+        _pillFont = new Font("Segoe UI", MathF.Round(11f * _dpi / 96), GraphicsUnit.Pixel);
+    }
+
+    /// <summary>Sizes, positions and re-regions the card for the monitor it belongs on:
+    /// the paste-target's screen when known, else the cursor's.</summary>
+    private void Present()
+    {
+        var screen = AnchorScreen ?? Screen.FromPoint(Cursor.Position);
+        var center = new Point(screen.Bounds.Left + screen.Bounds.Width / 2,
+                               screen.Bounds.Top + screen.Bounds.Height / 2);
+        EnsureFonts(DpiOfPoint(center));
+        Size = CanonicalSize;
+        PositionOverlay();
+        RebuildRegion();
+        ReassertTopMost();
     }
 
     private void RebuildRegion()
     {
         if (Width <= 0 || Height <= 0) return;
         var old = Region;
-        Region = new Region(RoundedPath(ClientRectangle, LogicalToDeviceUnits(20)));
+        Region = new Region(RoundedPath(ClientRectangle, S(LogicalRegionRadius)));
         old?.Dispose();
         Invalidate();
     }
@@ -129,36 +201,34 @@ public sealed class OverlayForm : Form
         return path;
     }
 
-    private Rectangle BarsRect()
+    // ------------------------------------------------------------------- layout
+
+    /// <summary>Equalizer block, vertically centered in the card.</summary>
+    private Rectangle BarsBox() =>
+        new(S(LogicalBarLeft), (ClientRectangle.Height - S(LogicalBarBoxHeight)) / 2,
+            S(LogicalBarsWidth), S(LogicalBarBoxHeight));
+
+    private int PillWidth(string text, bool withDot)
     {
-        int pad = LogicalToDeviceUnits(16);
-        int barWidth = LogicalToDeviceUnits(6);
-        int gap = LogicalToDeviceUnits(4);
-        return new Rectangle(pad, LogicalToDeviceUnits(20),
-            BarCount * barWidth + (BarCount - 1) * gap, LogicalToDeviceUnits(64));
+        var textSize = TextRenderer.MeasureText(text, _pillFont);
+        int width = textSize.Width + (withDot ? S(LogicalPillDot) + S(LogicalPillDotGap) : 0)
+            + S(LogicalPillPad) * 2;
+        return Math.Min(width, S(LogicalMaxPillWidth));
     }
 
-    private Rectangle TextRect()
+    /// <summary>Transcript block: strictly inside the card (FitTail measures against
+    /// exactly this rectangle, so a fitted transcript can never spill past the
+    /// bottom edge) and never under the pill column.</summary>
+    private Rectangle TextRect(int pillColumnWidth)
     {
-        var bars = BarsRect();
-        int pad = LogicalToDeviceUnits(22);
-        return new Rectangle(bars.Right + LogicalToDeviceUnits(14), LogicalToDeviceUnits(10),
-            ClientRectangle.Width - pad - bars.Right - LogicalToDeviceUnits(14) - PillColumnWidth,
-            LogicalToDeviceUnits(74));
+        int textX = S(LogicalBarLeft + LogicalBarsWidth + LogicalGapBarsToText);
+        int pillLeft = ClientRectangle.Width - S(LogicalEdgePad) - pillColumnWidth;
+        int width = Math.Max(S(60), pillLeft - S(LogicalGapTextToPills) - textX);
+        return new Rectangle(textX, S(LogicalTextVPad), width,
+            ClientRectangle.Height - 2 * S(LogicalTextVPad));
     }
 
-    /// <summary>Narrow right column holding the two stacked pills — sized to the
-    /// widest pill so nothing gets ellipsised into unreadable smudges.</summary>
-    private int PillColumnWidth =>
-        Math.Max(MeasurePill("→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard")).Width,
-                 MeasurePill("ERROR").Width) + LogicalToDeviceUnits(4);
-
-    private Size MeasurePill(string text)
-    {
-        var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
-        return new Size(textSize.Width + LogicalToDeviceUnits(6) + LogicalToDeviceUnits(5) + LogicalToDeviceUnits(18),
-            LogicalToDeviceUnits(16));
-    }
+    // -------------------------------------------------------------------- paint
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -172,104 +242,104 @@ public sealed class OverlayForm : Form
             g.FillRectangle(background, rect);
         }
 
-        int radius = LogicalToDeviceUnits(12);
         bool error = _mode == OverlayMode.Error;
         using (var border = new Pen(error ? Theme.DangerStrong : Color.FromArgb(64, 64, 74)))
         {
-            using var path = RoundedPath(rect, radius);
+            using var path = RoundedPath(rect, S(LogicalRegionRadius));
             g.DrawPath(border, path);
         }
 
-        // Equalizer bars.
-        var bars = BarsRect();
-        int barWidth = LogicalToDeviceUnits(4);
-        int gap = LogicalToDeviceUnits(3);
-        int baseBarHeight = LogicalToDeviceUnits(6);
-        int corner = LogicalToDeviceUnits(2);
+        // Equalizer bars, inside BarsBox() — never past the card edge.
+        var box = BarsBox();
+        int barWidth = S(LogicalBarSize);
+        int barGap = S(LogicalBarGap);
+        Color barTop = error ? Theme.DangerStrong : Color.FromArgb(168, Theme.AccentBright.R, Theme.AccentBright.G, Theme.AccentBright.B);
+        Color barBottom = error ? Theme.Danger : Theme.Accent;
         for (var i = 0; i < BarCount; i++)
         {
-            int height = Math.Max(baseBarHeight, (int)(bars.Height * Math.Clamp(_barLevels[i], 0, 1)));
-            int x = bars.Left + i * (barWidth + gap);
-            int y = bars.Bottom - height;
-            var top = Color.FromArgb(168, error ? Theme.DangerStrong.R : Theme.AccentBright.R, error ? Theme.DangerStrong.G : Theme.AccentBright.G, error ? Theme.DangerStrong.B : Theme.AccentBright.B);
-            using (var barGradient = new LinearGradientBrush(new Rectangle(x, y, barWidth, height), top, Theme.Accent, 90f))
+            int height = Math.Max(S(LogicalBarMinHeight), (int)(box.Height * Math.Clamp(_barLevels[i], 0, 1)));
+            int x = box.Left + i * (barWidth + barGap);
+            int y = box.Bottom - height;
+            using (var barGradient = new LinearGradientBrush(new Rectangle(x, y, barWidth, height), barTop, barBottom, 90f))
             {
-                using var path = RoundedPath(new Rectangle(x, y, barWidth, height), corner);
+                using var path = RoundedPath(new Rectangle(x, y, barWidth, height), S(2));
                 g.FillPath(barGradient, path);
             }
         }
 
         // Live transcript (realtime) — newest tail shown, oldest trimmed — or the
-        // current status while nothing was heard yet. Regular weight reads clean
-        // on dark; semibold turned into mush.
-        var textRect = TextRect();
+        // current status while nothing was heard yet. Measured and drawn with the
+        // same pixel-sized font; vertically centered in its block.
+        string recText = error ? "ERROR" : "REC";
+        string destText = "→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard");
+        int recWidth = PillWidth(recText, withDot: true); // the status pill always shows its dot
+        int destWidth = PillWidth(destText, withDot: false);
+        var textRect = TextRect(Math.Max(recWidth, destWidth));
         var primary = _transcript.Length > 0 ? _transcript : _statusText;
         primary = FitTail(primary, textRect, _transcriptFont);
         TextRenderer.DrawText(g, primary, _transcriptFont, textRect,
             error ? Theme.Danger : Theme.TextBright,
-            TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix);
 
-        // Right column, two rows: REC on the first, destination under it — both fit
-        // within the two transcript rows, so the card stays short.
-        int pillHeight = LogicalToDeviceUnits(16);
-        int right = rect.Right - LogicalToDeviceUnits(10);
-        int columnLeft = rect.Right - LogicalToDeviceUnits(14) - PillColumnWidth;
-
-        DrawPill(g, error ? "ERROR" : "REC",
-            right, rect.Top + LogicalToDeviceUnits(10), pillHeight,
+        // Right column, two rows: REC on the first, destination under it.
+        int pillHeight = S(LogicalPillHeight);
+        int right = rect.Right - S(LogicalEdgePad);
+        int pillTop = S((LogicalHeight - 2 * LogicalPillHeight - LogicalPillGap) / 2);
+        DrawPill(g, recText, right, pillTop, pillHeight, recWidth,
             error ? Theme.Danger : Theme.AccentBright,
             error ? Color.FromArgb(60, 24, 24, 28) : Color.FromArgb(48, 120, 40, 44),
             error ? Theme.DangerStrong : Theme.Danger);
-        DrawPill(g, "→ " + (_targetApp.Length > 0 ? _targetApp : "clipboard"),
-            right, rect.Top + LogicalToDeviceUnits(32), pillHeight,
+        DrawPill(g, destText, right, pillTop + pillHeight + S(LogicalPillGap), pillHeight, destWidth,
             Theme.TextCaption, Color.FromArgb(38, 38, 46), null);
-        _ = columnLeft;
     }
 
-    /// <summary>Draws a rounded pill with an optional leading dot; returns its width.</summary>
-    private Size DrawPill(Graphics g, string text, int right, int top, int height,
+    /// <summary>Draws a rounded pill with an optional leading dot at a pre-computed
+    /// width (see <see cref="PillWidth"/>); longer text ellipsises inside it.</summary>
+    private void DrawPill(Graphics g, string text, int right, int top, int height, int width,
         Color textColor, Color backColor, Color? dotColor)
     {
-        var textSize = TextRenderer.MeasureText(text, Theme.FontCaption);
-        int textWidth = textSize.Width;
-        int dot = dotColor.HasValue ? LogicalToDeviceUnits(6) : 0;
-        int width = textWidth + dot + (dot > 0 ? LogicalToDeviceUnits(5) : 0) + LogicalToDeviceUnits(18);
         var rect = new Rectangle(right - width, top, width, height);
         using (var brush = new SolidBrush(backColor))
         using (var path = RoundedPath(rect, height / 2))
         {
             g.FillPath(brush, path);
         }
-        if (dotColor.HasValue)
+        int dot = dotColor.HasValue ? S(LogicalPillDot) : 0;
+        int textLeft = rect.Left + S(LogicalPillPad);
+        if (dot > 0)
         {
             var dotY = rect.Top + (height - dot) / 2;
             using var dotBrush = new SolidBrush(dotColor.Value);
-            g.FillEllipse(dotBrush, new Rectangle(rect.Left + LogicalToDeviceUnits(9), dotY, dot, dot));
+            g.FillEllipse(dotBrush, new Rectangle(textLeft, dotY, dot, dot));
+            textLeft += dot + S(LogicalPillDotGap);
         }
-        TextRenderer.DrawText(g, text, Theme.FontCaption,
-            new Rectangle(rect.Left + LogicalToDeviceUnits(9) + dot, rect.Top, width - dot - LogicalToDeviceUnits(14), height),
+        TextRenderer.DrawText(g, text, _pillFont,
+            new Rectangle(textLeft, rect.Top, rect.Right - S(LogicalPillPad) - textLeft, height),
             textColor, TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
-        return new Size(width, height);
     }
 
     /// <summary>Trims a long string from its START so the newest words stay visible;
     /// pure tail-ellipsis would hide exactly the part being dictated right now.
-    /// Binary search for the longest suffix that fits — a quarter-cut loop could
-    /// overshoot into a single line.</summary>
+    /// Binary search for the smallest cut point whose suffix still fits — the
+    /// predicate "suffix starting at mid fits" is monotone (a larger mid means a
+    /// shorter suffix), so the smallest fitting mid IS the longest visible tail.
+    /// Searching for the largest fitting mid instead collapses the transcript to
+    /// its final character.</summary>
     private string FitTail(string text, Rectangle rect, Font font)
     {
         if (text.Length == 0) return text;
         if (MeasuredHeight(text, rect, font) <= rect.Height) return text;
-        int lo = 16, hi = text.Length - 1, best = 16;
+        int lo = 1, hi = text.Length - 1;
+        int best = text.Length - 1; // fallback: ellipsis + the newest character
         while (lo <= hi)
         {
             var mid = (lo + hi) / 2;
             if (MeasuredHeight("…" + text[mid..], rect, font) <= rect.Height)
             {
                 best = mid;
-                lo = mid + 1;
+                hi = mid - 1;
             }
-            else hi = mid - 1;
+            else lo = mid + 1;
         }
         return "…" + text[best..];
     }
@@ -277,6 +347,8 @@ public sealed class OverlayForm : Form
     private static int MeasuredHeight(string text, Rectangle rect, Font font) =>
         TextRenderer.MeasureText(text, font, rect.Size,
             TextFormatFlags.WordBreak | TextFormatFlags.NoPrefix | TextFormatFlags.EndEllipsis).Height;
+
+    // --------------------------------------------------------------- animation
 
     private void TickAnimation()
     {
@@ -306,6 +378,8 @@ public sealed class OverlayForm : Form
         SetWindowPos(Handle, HwndTopmost, 0, 0, 0, 0,
             SwpNoSize | SwpNoMove | SwpNoActivate | SwpShowWindow);
 
+    // --------------------------------------------------------------- public API
+
     public void ShowRecording()
     {
         if (InvokeRequired) { BeginInvoke(ShowRecording); return; }
@@ -315,11 +389,7 @@ public sealed class OverlayForm : Form
         _level = 0;
         _transcript = "";
         Array.Clear(_barLevels);
-        PositionOverlay();
-        ApplyCurrentMonitorSize();
-        PositionOverlay();
-        RebuildRegion();
-        ReassertTopMost();
+        Present();
         Show();
         _animTimer.Start();
     }
@@ -364,11 +434,7 @@ public sealed class OverlayForm : Form
         _mode = OverlayMode.Error;
         _statusText = message;
         _transcript = "";
-        PositionOverlay();
-        ApplyCurrentMonitorSize();
-        PositionOverlay();
-        RebuildRegion();
-        ReassertTopMost();
+        Present();
         Show();
         Invalidate();
         _errorTimer.Start();
@@ -383,54 +449,49 @@ public sealed class OverlayForm : Form
         _hideTimer.Start();
     }
 
-    /// <summary>Snap the card to the canonical size for the monitor it is on now.
-    /// DeviceDpi can report a stale value for a borderless non-activating form that
-    /// was created on one monitor and shown on another — ask the MONITOR directly
-    /// (GetDpiForMonitor), or the card renders at the wrong scale ("half cut off",
-    /// one text line instead of two).</summary>
-    public void ApplyCurrentMonitorSize()
+    /// <summary>Monitor to anchor the card to: the paste-target window's screen
+    /// (set by TrayContext at recording start) — NOT the cursor, which may sit on
+    /// a different monitor than the one the user is typing on.</summary>
+    public Screen? AnchorScreen { get; set; }
+
+    /// <summary>Pins the card to the TOP center of the anchor monitor: the bottom
+    /// of the screen is where input fields live — the overlay must never cover them.
+    /// Clamped into the monitor's working area so mixed-DPI coordinate surprises
+    /// can never push it off-screen.</summary>
+    private void PositionOverlay()
     {
-        var dpi = MonitorDpiOf(Handle);
-        Size = new Size(480 * (int)dpi / 96, 74 * (int)dpi / 96);
-        RebuildRegion();
+        var area = (AnchorScreen ?? Screen.FromPoint(Cursor.Position)).WorkingArea;
+        int x = area.Width - Width < 16
+            ? area.Left
+            : Math.Clamp(area.Left + (area.Width - Width) / 2, area.Left + 8, area.Right - Width - 8);
+        int y = Math.Clamp(area.Top + 12, area.Top + 8, Math.Max(area.Top + 8, area.Bottom - Height - 8));
+        Location = new Point(x, y);
     }
 
+    // ------------------------------------------------------------------- win32
+
     [DllImport("user32.dll")]
-    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    private static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
     [DllImport("shcore.dll")]
     private static extern int GetDpiForMonitor(IntPtr hmonitor, int dpiType, out uint dpiX, out uint dpiY);
 
-    /// <summary>Effective DPI of the monitor this window is on (MDT_EFFECTIVE_DPI).</summary>
-    private static uint MonitorDpiOf(IntPtr hwnd)
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+
+    /// <summary>Effective DPI (MDT_EFFECTIVE_DPI) of the monitor containing a point.</summary>
+    private static uint DpiOfPoint(Point p)
     {
         const uint tonearest = 2;
         const int effective = 0;
         try
         {
-            var hmon = MonitorFromWindow(hwnd, tonearest);
+            var hmon = MonitorFromPoint(new POINT { X = p.X, Y = p.Y }, tonearest);
             if (hmon != IntPtr.Zero &&
                 GetDpiForMonitor(hmon, effective, out var dpiX, out _) == 0 && dpiX > 0)
                 return dpiX;
         }
         catch (Exception) { }
         return 96;
-    }
-
-    /// <summary>Pins the card to the TOP center of the cursor's monitor: the bottom
-    /// of the screen is where input fields live — the overlay must never cover them.
-    /// Clamped into the monitor's working area so mixed-DPI coordinate surprises
-    /// can never push it off-screen.</summary>
-    /// <summary>Monitor to anchor the card to: the paste-target window's screen
-    /// (set by TrayContext at recording start) — NOT the cursor, which may sit on
-    /// a different monitor than the one the user is typing on.</summary>
-    public Screen? AnchorScreen { get; set; }
-
-    private void PositionOverlay()
-    {
-        var area = (AnchorScreen ?? Screen.FromPoint(Cursor.Position)).WorkingArea;
-        var x = Math.Clamp(area.Left + (area.Width - Width) / 2, area.Left + 8, area.Right - Width - 8);
-        var y = Math.Clamp(area.Top + 12, area.Top + 8, Math.Max(area.Top + 8, area.Bottom - Height - 8));
-        Location = new Point(x, y);
     }
 
     [DllImport("user32.dll")]
