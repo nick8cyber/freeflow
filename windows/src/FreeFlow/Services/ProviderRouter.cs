@@ -72,9 +72,28 @@ public sealed class ProviderRouter
                 // Custom vocabulary is passed natively to the transcription model
                 // (audioTranscriptionConfig.customVocabulary), capped at 100 entries.
                 var vocabulary = TextUtil.ParseVocabulary(s.CustomVocabulary).Take(100).ToArray();
-                var text = await gemini.TranscribeAsync(
-                    wavBytes, model, s.TranscriptionLanguage, vocabulary, s.TranscriptionTimeoutSeconds, ct);
-                return new TranscriptionOutcome(text, "Gemini", model);
+                try
+                {
+                    var text = await gemini.TranscribeAsync(
+                        wavBytes, model, s.TranscriptionLanguage, vocabulary, s.TranscriptionTimeoutSeconds, ct);
+                    return new TranscriptionOutcome(text, "Gemini", model);
+                }
+                catch (ProviderException ex) when (
+                    ex.Kind == ProviderFailureKind.EmptyOutput ||
+                    ex.Kind == ProviderFailureKind.Network)
+                {
+                    // First request after a long idle can hit a cold upstream that
+                    // answers 200 with no text, or a pooled connection the server
+                    // closed while idle — while the SAME request seconds later
+                    // succeeds ("the second dictation always works"). One immediate
+                    // retry recovers the dictation; a second consecutive failure
+                    // means the audio genuinely has no speech, and the normal
+                    // fallback chain (Groq / error) takes over.
+                    lastError = ex;
+                    var retry = await gemini.TranscribeAsync(
+                        wavBytes, model, s.TranscriptionLanguage, vocabulary, s.TranscriptionTimeoutSeconds, ct);
+                    return new TranscriptionOutcome(retry, "Gemini", model);
+                }
             }
             catch (ProviderException ex) when (ex.Kind != ProviderFailureKind.Cancelled)
             {

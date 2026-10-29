@@ -83,6 +83,7 @@ public sealed class AudioRecorder : IDisposable
     private WaveFormat _captureFormat = TargetFormat;
     private bool _stopRequested;
     private bool _firstAudioFired;
+    private bool _rearmed;
 
     public event Action<double>? LevelChanged;
     public event Action? FirstAudioReceived;
@@ -258,11 +259,43 @@ public sealed class AudioRecorder : IDisposable
         if (!IsRecording) return;
         lock (_lock)
         {
-            if (_rawStream.Length == _bytesAtWatchdogStart)
-            {
-                Fail("No audio data received from the microphone");
-            }
+            if (_rawStream.Length != _bytesAtWatchdogStart) return; // buffers are flowing
         }
+        // The first capture session after a long device idle can open fine yet
+        // deliver nothing. One silent re-open of the capture line wakes the
+        // device and keeps the dictation alive; only a second dead window fails
+        // the session for real.
+        if (!_rearmed)
+        {
+            _rearmed = true;
+            if (RearmCapture()) return;
+        }
+        Fail("No audio data received from the microphone");
+    }
+
+    /// <summary>Re-opens the capture ladder (same policy as <see cref="Start"/>)
+    /// and re-arms the watchdog baseline. Returns false when no format opens —
+    /// the caller then fails the recording as before.</summary>
+    private bool RearmCapture()
+    {
+        DisposeCapture();
+        try
+        {
+            var deviceNumber = ResolvePreferredDeviceNumber();
+            Exception? lastError = null;
+            var opened = TryOpenLadder(deviceNumber, ref lastError);
+            if (!opened && deviceNumber != -1)
+                opened = TryOpenLadder(-1, ref lastError);
+            if (!opened) return false;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+        lock (_lock) _bytesAtWatchdogStart = _rawStream.Length;
+        _watchdog.Stop();
+        _watchdog.Start();
+        return true;
     }
 
     private void OnDataAvailable(object? sender, WaveInEventArgs e)

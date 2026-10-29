@@ -259,7 +259,11 @@ public sealed class GeminiClient(string baseUrl, string apiKey)
             }
 
             throw new ProviderException(
-                ProviderFailureKind.InvalidResponse,
+                // EmptyOutput, not InvalidResponse: a 200 with no text is how a cold
+                // upstream answers after a long idle (the retry-once policy in
+                // ProviderRouter keys on this kind). Blocked/finishReason failures
+                // above are deterministic and stay InvalidResponse.
+                ProviderFailureKind.EmptyOutput,
                 $"Gemini returned no text for model {model}.");
         }
         catch (ProviderException)
